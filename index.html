@@ -1,144 +1,269 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>工作台账</title>
-  <!-- Chart.js CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <!-- 样式文件 -->
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="计件记账">
+<meta name="theme-color" content="#6366F1">
+<title>计件记账</title>
+<!-- 样式文件 -->
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div id="app">
-  <!-- 顶部栏 -->
-  <div class="header">
-    <div class="date-nav">
-      <button id="prevDay">‹</button>
-      <span class="date-display" id="currentDate">今天</span>
-      <button id="nextDay">›</button>
+<div class="header">
+    <div class="header-top">
+        <div><h1>计件记账</h1><div class="date" id="currentDate"></div></div>
+        <div class="header-streak" id="streakBadge">0天</div>
     </div>
-    <div class="today-total" id="headerSummary">今日 0件 · 0h</div>
-  </div>
-
-  <!-- 主内容 -->
-  <div class="main-content" id="mainContent">
-    <!-- 首页 -->
-    <div class="page active" id="page-home">
-      <div class="card">
-        <div class="card-title">📋 当日汇总（<span id="todayDate"></span>）</div>
-        <div id="todaySummary"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">📝 记录列表</div>
-        <div id="recordList"></div>
-      </div>
-    </div>
-
-    <!-- 统计 -->
-    <div class="page" id="page-stats">
-      <div class="stat-period">
-        <button class="active" data-period="week">本周</button>
-        <button data-period="month">本月</button>
-      </div>
-      <div id="statsContainer"></div>
-      <div id="statsOverview" class="stat-overview" style="display:none;"></div>
-      <div class="card" style="margin-top:12px;">
-        <div class="card-title">📊 品牌统计</div>
-        <canvas id="statChart" height="200"></canvas>
-      </div>
-    </div>
-
-    <!-- 设置 -->
-    <div class="page" id="page-settings">
-      <div class="setting-item">
-        <div class="label">🏷️ 品牌管理</div>
-        <div id="brandList"></div>
-        <div class="add-brand">
-          <input id="newBrandInput" placeholder="新品牌名" maxlength="10">
-          <button id="addBrandBtn">添加</button>
+    <div class="header-stats">
+        <div class="header-stat">
+            <div class="header-stat-label">今日计件</div>
+            <div class="header-stat-val" id="headerPieceQty">0件</div>
+            <div class="header-stat-sub" id="headerPieceSub"></div>
         </div>
-      </div>
-      <div class="setting-item">
-        <div class="label">📦 数据备份</div>
-        <div class="setting-actions">
-          <button class="action-btn" id="exportBtn">导出 JSON</button>
-          <button class="action-btn" id="importBtn">导入 JSON</button>
-          <button class="action-btn danger" id="clearBtn">清除所有</button>
-          <input type="file" id="fileInput" accept=".json" style="display:none">
+        <div class="header-stat">
+            <div class="header-stat-label">今日工时</div>
+            <div class="header-stat-val" id="headerHours">0h</div>
+            <div class="header-stat-sub" id="headerHourSub"></div>
         </div>
-      </div>
-      <div style="padding:20px;text-align:center;font-size:12px;color:#aab8c8;">
-        数据存储在 IndexedDB · 支持离线使用
-      </div>
     </div>
-  </div>
-
-  <!-- 底部导航 -->
-  <div class="bottom-nav" id="bottomNav">
-    <button class="nav-item active" data-page="home"><span class="icon">📋</span>记录</button>
-    <button class="nav-item" data-page="stats"><span class="icon">📊</span>统计</button>
-    <button class="nav-item add-btn" id="showAddBtn"><span class="icon">+</span></button>
-    <button class="nav-item" data-page="settings"><span class="icon">⚙️</span>设置</button>
-  </div>
-
-  <!-- 新增/编辑模态框 -->
-  <div class="modal-overlay" id="addModal">
-    <div class="modal-box">
-      <div class="handle"></div>
-      <h3 id="modalTitle">✏️ 新增记录</h3>
-      <div class="form-group">
-        <label>品牌</label>
-        <select id="brandSelect"></select>
-      </div>
-      <div class="form-group">
-        <label>类型</label>
-        <div class="type-toggle" id="typeToggle">
-          <button class="active piece" data-type="piece">计件</button>
-          <button data-type="time">计时</button>
-        </div>
-      </div>
-      <div class="form-group" id="quantityGroup">
-        <label id="quantityLabel">数量</label>
-        <div class="input-with-timer">
-          <input type="text" inputmode="decimal" placeholder="0" id="quantityInput">
-          <button class="timer-btn" id="timerBtn">⏱️</button>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>班次</label>
-        <div class="shift-selector" id="shiftSelector">
-          <button data-shift="早班" class="active">早班</button>
-          <button data-shift="中班">中班</button>
-          <button data-shift="晚班">晚班</button>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>日期</label>
-        <input type="date" id="workDate">
-      </div>
-      <div class="form-group">
-        <label>备注（可选）</label>
-        <input placeholder="备注" id="noteInput" maxlength="20">
-      </div>
-      <button class="btn-save" id="saveRecordBtn">保存</button>
-      <button class="btn-save btn-delete" id="deleteRecordBtn" style="display:none;">删除此记录</button>
-    </div>
-  </div>
-
-  <!-- 计时器浮层 -->
-  <div class="timer-overlay" id="timerOverlay">
-    <button class="timer-close" id="timerClose">✕</button>
-    <div class="timer-display" id="timerDisplay">00:00</div>
-    <div class="timer-controls">
-      <button class="start" id="timerStartPause">▶</button>
-      <button class="stop" id="timerStop">⏹</button>
-    </div>
-  </div>
 </div>
 
-<!-- JavaScript 文件 -->
+<div class="container">
+
+    <!-- 首页 -->
+    <div class="page active" id="page-home">
+        <!-- 本月收入 -->
+        <div class="income-card">
+            <div class="income-label">本月收入（估算）</div>
+            <div class="income-value" id="monthIncome">0</div>
+            <div class="income-sub" id="monthIncomeSub"></div>
+            <div class="income-cmp">
+                <div class="income-cmp-item">
+                    <div class="income-cmp-val" id="cmpQty">--</div>
+                    <div class="income-cmp-label">件数 vs 上月</div>
+                </div>
+                <div class="income-cmp-item">
+                    <div class="income-cmp-val" id="cmpIncome">--</div>
+                    <div class="income-cmp-label">收入 vs 上月</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 今日明细 -->
+        <div class="sec-title">今日明细</div>
+        <div class="breakdown-grid">
+            <div class="breakdown-item"><div class="breakdown-label">早班</div><div class="breakdown-value" id="todayMorning">0</div><div class="breakdown-sub">件</div></div>
+            <div class="breakdown-item"><div class="breakdown-label">中班</div><div class="breakdown-value" id="todayNoon">0</div><div class="breakdown-sub">件</div></div>
+            <div class="breakdown-item"><div class="breakdown-label">晚班</div><div class="breakdown-value" id="todayEvening">0</div><div class="breakdown-sub">件</div></div>
+        </div>
+
+        <!-- 模式切换 + 添加记录 -->
+        <div class="sec-title">添加记录</div>
+        <div class="card" style="margin-bottom:18px">
+            <div class="mode-switch">
+                <button class="mode-btn active" id="modePieceBtn" onclick="switchMode('piece')">计件</button>
+                <button class="mode-btn" id="modeHourBtn" onclick="switchMode('hour')">计时</button>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">日期</label>
+                <input type="date" class="input" id="recordDateInput">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">时段</label>
+                <div class="time-pills">
+                    <div class="time-pill active" data-time="早">早</div>
+                    <div class="time-pill" data-time="中">中</div>
+                    <div class="time-pill" data-time="晚">晚</div>
+                </div>
+            </div>
+
+            <!-- 计件字段 -->
+            <div id="pieceFields">
+                <div class="form-group">
+                    <label class="form-label">品牌</label>
+                    <div class="brand-chips" id="brandChips"></div>
+                    <input type="text" class="input" id="brandInput" placeholder="输入新品牌名称" style="margin-top:8px">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">数量（件）</label>
+                    <input type="number" class="input" id="qtyInput" placeholder="输入件数" min="1" max="99999">
+                </div>
+            </div>
+
+            <!-- 计时字段 -->
+            <div id="hourFields" class="hidden">
+                <div class="form-group">
+                    <label class="form-label">工时（小时）</label>
+                    <input type="number" class="input" id="hoursInput" placeholder="例如：8" min="0" step="0.5" max="24">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">备注（选填）</label>
+                    <input type="text" class="input" id="hourNoteInput" placeholder="例如：临时安排">
+                </div>
+            </div>
+
+            <button class="btn btn-primary" id="addBtn" onclick="addRecord()">添加记录</button>
+        </div>
+
+        <!-- 今日记录 -->
+        <div class="sec-title" id="recordListTitle">今日记录</div>
+        <div class="record-list" id="todayRecordList">
+            <div class="empty"><div class="empty-icon">📋</div><div>暂无记录</div></div>
+        </div>
+    </div>
+
+    <!-- 统计页 -->
+    <div class="page" id="page-stats">
+        <div class="stats-tabs">
+            <button class="stats-tab active" onclick="switchStatsTab('month',this)">月度</button>
+            <button class="stats-tab" onclick="switchStatsTab('week',this)">周度</button>
+        </div>
+        <div id="statsMonthView">
+            <div class="month-nav">
+                <button class="month-nav-btn" onclick="changeMonth(-1)">◀</button>
+                <div class="month-nav-text" id="monthText"></div>
+                <button class="month-nav-btn" onclick="changeMonth(1)">▶</button>
+            </div>
+            <div id="monthStatsContent"></div>
+        </div>
+        <div id="statsWeekView" class="hidden">
+            <div class="month-nav">
+                <button class="month-nav-btn" onclick="changeWeek(-1)">◀</button>
+                <div class="month-nav-text" id="weekText"></div>
+                <button class="month-nav-btn" onclick="changeWeek(1)">▶</button>
+            </div>
+            <div id="weekStatsContent"></div>
+        </div>
+    </div>
+
+    <!-- 设置页 -->
+    <div class="page" id="page-settings">
+        <div class="sec-title" style="margin-top:8px">品牌管理（计件单价）</div>
+        <div class="card" style="margin-bottom:18px">
+            <button class="btn btn-primary" style="margin-bottom:14px" onclick="showModal('brandModal')">添加品牌</button>
+            <div id="brandManageList"></div>
+        </div>
+        <div class="sec-title">数据</div>
+        <div class="card" style="margin-bottom:18px">
+            <button class="btn btn-green" style="margin-bottom:10px" onclick="exportCSV()">导出 CSV</button>
+            <button class="btn btn-orange" style="margin-bottom:10px" onclick="importData()">导入 JSON</button>
+            <button class="btn btn-red" onclick="clearData()">清除所有数据</button>
+        </div>
+        <div class="card" style="text-align:center;color:var(--gray-400);font-size:13px">
+            计件记账 v6.0<br>计件 + 计时双模式 · 数据保存在本机
+        </div>
+    </div>
+</div>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+    <button class="tab-btn active" onclick="switchPage('home',this)">
+        <span class="tab-icon">🏠</span>首页
+    </button>
+    <button class="tab-btn" onclick="switchPage('stats',this)">
+        <span class="tab-icon">📊</span>统计
+    </button>
+    <button class="tab-btn" onclick="switchPage('settings',this)">
+        <span class="tab-icon">⚙️</span>设置
+    </button>
+</div>
+
+<!-- 编辑记录弹窗 -->
+<div class="modal-mask" id="editModal">
+    <div class="modal-box">
+        <div class="modal-title">编辑记录</div>
+        <div class="modal-field">
+            <div class="modal-field-label">模式</div>
+            <div style="font-size:14px;font-weight:600;color:var(--gray-700);margin-bottom:10px" id="editModeLabel">--</div>
+        </div>
+        <div class="modal-field">
+            <div class="modal-field-label">时段</div>
+            <div class="time-pills" id="editTimePills">
+                <div class="time-pill" data-time="早">早</div>
+                <div class="time-pill" data-time="中">中</div>
+                <div class="time-pill" data-time="晚">晚</div>
+            </div>
+        </div>
+        <div class="modal-field" id="editPieceField">
+            <div class="modal-field-label">品牌</div>
+            <input type="text" class="input" id="editBrand" placeholder="品牌名称">
+        </div>
+        <div class="modal-field" id="editQtyField">
+            <div class="modal-field-label">数量（件）</div>
+            <input type="number" class="input" id="editQty" min="1" max="99999">
+        </div>
+        <div class="modal-field hidden" id="editHoursField">
+            <div class="modal-field-label">工时（小时）</div>
+            <input type="number" class="input" id="editHours" min="0" step="0.5" max="24">
+        </div>
+        <div class="modal-field hidden" id="editNoteField">
+            <div class="modal-field-label">备注</div>
+            <input type="text" class="input" id="editNote" placeholder="备注">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-gray" onclick="hideModal('editModal')">取消</button>
+            <button class="btn btn-primary" onclick="saveEdit()">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- 添加品牌弹窗 -->
+<div class="modal-mask" id="brandModal">
+    <div class="modal-box">
+        <div class="modal-title">添加品牌</div>
+        <div class="modal-field">
+            <div class="modal-field-label">品牌名称</div>
+            <input type="text" class="input" id="newBrandInput" placeholder="品牌名称">
+        </div>
+        <div class="modal-field">
+            <div class="modal-field-label">单价（元/件，选填）</div>
+            <input type="number" class="input" id="newBrandPrice" placeholder="例如：5.5" min="0" step="0.01">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-gray" onclick="hideModal('brandModal')">取消</button>
+            <button class="btn btn-primary" onclick="addNewBrand()">添加</button>
+        </div>
+    </div>
+</div>
+
+<!-- 设置单价弹窗 -->
+<div class="modal-mask" id="priceModal">
+    <div class="modal-box">
+        <div class="modal-title">设置单价</div>
+        <div class="modal-field">
+            <div class="modal-field-label" id="priceModalBrand">品牌：</div>
+            <input type="number" class="input" id="priceInput" placeholder="单价（元/件）" min="0" step="0.01">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-gray" onclick="hideModal('priceModal')">取消</button>
+            <button class="btn btn-primary" onclick="savePrice()">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- 登录验证遮罩 -->
+<div class="modal-mask active" id="loginModal" style="z-index:999;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);">
+    <div class="modal-box" style="max-width:340px;text-align:center;">
+        <div style="font-size:48px;margin-bottom:10px;">🔐</div>
+        <div class="modal-title">请输入密码</div>
+        <div class="modal-field">
+            <input type="password" class="input" id="loginPassword" placeholder="密码" style="text-align:center;font-size:18px;letter-spacing:4px;">
+        </div>
+        <div style="color:var(--red);font-size:14px;margin-bottom:12px;display:none;" id="loginError">密码错误，请重试</div>
+        <button class="btn btn-primary" onclick="checkPassword()">解锁</button>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<input type="file" id="fileInput" accept=".json" onchange="handleImport(event)">
+
+<!-- 脚本文件 -->
 <script src="app.js"></script>
 </body>
 </html>
