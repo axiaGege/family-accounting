@@ -309,7 +309,7 @@ async function renderHome() {
 }
 
 // ================================================================
-//  统计页（修复滚动抖动）
+//  统计页（彻底移除滚动干预）
 // ================================================================
 let currentStatPeriod = 'week';
 
@@ -335,8 +335,6 @@ async function renderStats() {
     statsContainer.innerHTML = '<div class="stat-empty">该周期暂无记录</div>';
     statsOverview.style.display = 'none';
     if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-    // 修复滚动抖动：重置滚动条到顶部
-    document.getElementById('mainContent').scrollTop = 0;
     return;
   }
 
@@ -461,9 +459,6 @@ async function renderStats() {
       scales: { y: { beginAtZero: true } }
     }
   });
-
-  // 修复滚动抖动：渲染完成后将滚动条置顶
-  document.getElementById('mainContent').scrollTop = 0;
 }
 
 // ================================================================
@@ -675,7 +670,7 @@ nextDayBtn.addEventListener('click', () => {
 });
 
 // ================================================================
-//  导航切换（切换时重置滚动）
+//  导航切换（延迟重置滚动）
 // ================================================================
 document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
   btn.addEventListener('click', function() {
@@ -684,8 +679,10 @@ document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
     document.getElementById('page-' + page).classList.add('active');
     document.querySelectorAll('.nav-item[data-page]').forEach(b => b.classList.remove('active'));
     this.classList.add('active');
-    // 切换页面时重置滚动位置
-    document.getElementById('mainContent').scrollTop = 0;
+    // 延迟重置滚动，避免与渲染冲突
+    setTimeout(() => {
+      document.getElementById('mainContent').scrollTop = 0;
+    }, 100);
     if (page === 'stats') renderStats();
     if (page === 'home') renderHome();
   });
@@ -700,6 +697,7 @@ statPeriodBtns.forEach(btn => {
     this.classList.add('active');
     currentStatPeriod = this.dataset.period;
     renderStats();
+    // 切换周期后不要额外干预滚动
   });
 });
 
