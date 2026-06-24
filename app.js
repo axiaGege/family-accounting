@@ -1,821 +1,828 @@
-// ================================================================
-//  数据层 - IndexedDB
-// ================================================================
-let db;
-const DB_NAME = 'WorkDB';
-const STORE_WORK = 'workList';
-const STORE_BRAND = 'brandList';
+// ===== 密码验证 =====
+(function() {
+    var loginModal = document.getElementById('loginModal');
+    var loginInput = document.getElementById('loginPassword');
+    var loginError = document.getElementById('loginError');
+    var correctPassword = '520118';
 
-function initDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 2);
-    req.onupgradeneeded = e => {
-      const d = e.target.result;
-      if (!d.objectStoreNames.contains(STORE_WORK)) {
-        d.createObjectStore(STORE_WORK, { keyPath: 'id', autoIncrement: true });
-      }
-      if (!d.objectStoreNames.contains(STORE_BRAND)) {
-        const bs = d.createObjectStore(STORE_BRAND, { keyPath: 'id', autoIncrement: true });
-        bs.createIndex('name', 'name', { unique: true });
-      }
-    };
-    req.onsuccess = e => { db = e.target.result; resolve(db); };
-    req.onerror = e => reject(e);
-  });
-}
-
-function dbAdd(store, data) {
-  return new Promise((resolve, reject) => {
-    const t = db.transaction(store, 'readwrite');
-    const req = t.objectStore(store).add(data);
-    req.onsuccess = e => resolve(e.target.result);
-    req.onerror = e => reject(e);
-  });
-}
-function dbPut(store, data) {
-  return new Promise((resolve, reject) => {
-    const t = db.transaction(store, 'readwrite');
-    const req = t.objectStore(store).put(data);
-    req.onsuccess = () => resolve();
-    req.onerror = e => reject(e);
-  });
-}
-function dbDel(store, id) {
-  return new Promise((resolve, reject) => {
-    const t = db.transaction(store, 'readwrite');
-    const req = t.objectStore(store).delete(id);
-    req.onsuccess = () => resolve();
-    req.onerror = e => reject(e);
-  });
-}
-function dbGetAll(store) {
-  return new Promise((resolve, reject) => {
-    const arr = [];
-    const t = db.transaction(store, 'readonly');
-    const req = t.objectStore(store).openCursor();
-    req.onsuccess = e => {
-      const cur = e.target.result;
-      if (cur) { arr.push(cur.value); cur.continue(); } else resolve(arr);
-    };
-    req.onerror = e => reject(e);
-  });
-}
-
-// ================================================================
-//  全局状态
-// ================================================================
-let brandList = [];
-let currentDate = new Date();
-let editingId = null;
-let selectedType = 'piece';
-let selectedShift = '早班';
-let chartInstance = null;
-
-// DOM 引用
-const $ = id => document.getElementById(id);
-const currentDateSpan = $('currentDate');
-const prevDayBtn = $('prevDay');
-const nextDayBtn = $('nextDay');
-const headerSummary = $('headerSummary');
-const todayDate = $('todayDate');
-const todaySummary = $('todaySummary');
-const recordList = $('recordList');
-
-const modal = $('addModal');
-const modalTitle = $('modalTitle');
-const brandSelect = $('brandSelect');
-const typeToggle = $('typeToggle');
-const quantityLabel = $('quantityLabel');
-const quantityInput = $('quantityInput');
-const shiftSelector = $('shiftSelector');
-const workDate = $('workDate');
-const noteInput = $('noteInput');
-const saveBtn = $('saveRecordBtn');
-const deleteBtn = $('deleteRecordBtn');
-const showAddBtn = $('showAddBtn');
-const timerBtn = $('timerBtn');
-
-const timerOverlay = $('timerOverlay');
-const timerDisplay = $('timerDisplay');
-const timerStartPause = $('timerStartPause');
-const timerStop = $('timerStop');
-const timerClose = $('timerClose');
-
-const statPeriodBtns = document.querySelectorAll('.stat-period button');
-const statsContainer = $('statsContainer');
-const statsOverview = $('statsOverview');
-const statChartCanvas = $('statChart');
-
-const brandListDom = $('brandList');
-const newBrandInput = $('newBrandInput');
-const addBrandBtn = $('addBrandBtn');
-const exportBtn = $('exportBtn');
-const importBtn = $('importBtn');
-const fileInput = $('fileInput');
-const clearBtn = $('clearBtn');
-
-// ================================================================
-//  工具函数
-// ================================================================
-function formatDate(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2,'0');
-  const day = String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
-function formatDateDisplay(d) {
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return '今天';
-  const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
-  if (d.toDateString() === yesterday.toDateString()) return '昨天';
-  return `${d.getMonth()+1}月${d.getDate()}日`;
-}
-function formatTime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h${m}m`;
-  return `${m}m`;
-}
-function formatTimeShort(seconds) {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-}
-function getDayStart(d) {
-  const copy = new Date(d);
-  copy.setHours(0,0,0,0);
-  return copy.getTime();
-}
-function getDayEnd(d) {
-  const copy = new Date(d);
-  copy.setHours(23,59,59,999);
-  return copy.getTime();
-}
-function getWeekStart(d) {
-  const copy = new Date(d);
-  const day = copy.getDay() || 7;
-  copy.setDate(copy.getDate() - day + 1);
-  copy.setHours(0,0,0,0);
-  return copy;
-}
-function getMonthStart(d) {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
-}
-function getDayOfWeek(d) {
-  const weekdays = ['日','一','二','三','四','五','六'];
-  return '周' + weekdays[d.getDay()];
-}
-
-// ================================================================
-//  品牌管理
-// ================================================================
-async function loadBrands() {
-  brandList = await dbGetAll(STORE_BRAND);
-  if (brandList.length === 0) {
-    await dbAdd(STORE_BRAND, { name: 'A品牌' });
-    await dbAdd(STORE_BRAND, { name: 'B品牌' });
-    await dbAdd(STORE_BRAND, { name: 'C品牌' });
-    brandList = await dbGetAll(STORE_BRAND);
-  }
-}
-function renderBrandSelect() {
-  brandSelect.innerHTML = '';
-  if (brandList.length === 0) {
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = '请添加品牌';
-    brandSelect.appendChild(opt);
-    return;
-  }
-  brandList.forEach(b => {
-    const opt = document.createElement('option');
-    opt.value = b.name;
-    opt.textContent = b.name;
-    brandSelect.appendChild(opt);
-  });
-  brandSelect.value = brandList[0].name;
-}
-function renderBrandList() {
-  brandListDom.innerHTML = '';
-  brandList.forEach(b => {
-    const tag = document.createElement('span');
-    tag.className = 'brand-tag';
-    tag.innerHTML = `${b.name} <span class="del-btn" data-id="${b.id}">✕</span>`;
-    brandListDom.appendChild(tag);
-  });
-  brandListDom.querySelectorAll('.del-btn').forEach(btn => {
-    const delHandler = async (e) => {
-      e.stopPropagation();
-      const id = Number(btn.dataset.id);
-      if (brandList.length <= 1) { alert('至少保留一个品牌'); return; }
-      const brandName = btn.parentElement.textContent.trim().replace('✕', '');
-      const all = await dbGetAll(STORE_WORK);
-      const used = all.some(r => r.brand === brandName);
-      if (used && !confirm(`品牌“${brandName}”已有记录，删除后记录将显示为“未命名”，确定？`)) return;
-      if (!used && !confirm(`确定删除品牌“${brandName}”？`)) return;
-      await dbDel(STORE_BRAND, id);
-      await loadBrands();
-      renderBrandSelect();
-      renderBrandList();
-      refreshAll();
-    };
-    btn.addEventListener('click', delHandler);
-    btn.addEventListener('touchstart', delHandler);
-  });
-}
-async function addBrand() {
-  const name = newBrandInput.value.trim();
-  if (!name) { alert('请输入品牌名'); return; }
-  if (brandList.some(b => b.name === name)) { alert('品牌已存在'); return; }
-  await dbAdd(STORE_BRAND, { name });
-  newBrandInput.value = '';
-  await loadBrands();
-  renderBrandSelect();
-  renderBrandList();
-  refreshAll();
-}
-addBrandBtn.addEventListener('click', addBrand);
-newBrandInput.addEventListener('keyup', e => { if (e.key === 'Enter') addBrand(); });
-
-// ================================================================
-//  核心渲染 - 首页
-// ================================================================
-async function renderHome() {
-  const dateStr = formatDate(currentDate);
-  todayDate.textContent = dateStr;
-  const all = await dbGetAll(STORE_WORK);
-  const dayRecords = all.filter(r => r.date === dateStr);
-
-  const shifts = { '早班': { piece: 0, time: 0 }, '中班': { piece: 0, time: 0 }, '晚班': { piece: 0, time: 0 } };
-  dayRecords.forEach(r => {
-    const s = shifts[r.shift];
-    if (s) {
-      if (r.type === 'piece') s.piece += r.quantity;
-      else s.time += r.duration;
-    }
-  });
-  let sumHtml = '';
-  for (const [shift, data] of Object.entries(shifts)) {
-    sumHtml += `<div class="stat-item"><b>${shift}</b>：计件 ${data.piece} 件 · 计时 ${data.time.toFixed(2)} 小时</div>`;
-  }
-  todaySummary.innerHTML = sumHtml || '<div class="empty-state">今日暂无记录</div>';
-
-  const totalPiece = dayRecords.filter(r => r.type === 'piece').reduce((s, r) => s + r.quantity, 0);
-  const totalTime = dayRecords.filter(r => r.type === 'time').reduce((s, r) => s + r.duration, 0);
-  headerSummary.textContent = `今日 ${totalPiece}件 · ${totalTime.toFixed(2)}h`;
-  currentDateSpan.textContent = formatDateDisplay(currentDate);
-
-  if (dayRecords.length === 0) {
-    recordList.innerHTML = '<div class="empty-state"><div class="big-icon">📋</div>暂无记录</div>';
-  } else {
-    const sorted = [...dayRecords].sort((a,b) => b.id - a.id);
-    let html = '';
-    sorted.forEach(r => {
-      const brand = r.brand || '未命名';
-      const typeLabel = r.type === 'piece' ? '计件' : '计时';
-      const value = r.type === 'piece' ? `${r.quantity}件` : `${r.duration.toFixed(2)}h`;
-      const cls = r.type === 'piece' ? 'piece' : 'time';
-      html += `
-        <div class="record-item" data-id="${r.id}">
-          <div class="left">
-            <span class="brand-badge">${brand}</span>
-            <div class="info">
-              <div class="type-label">${typeLabel}</div>
-              <div class="meta">${r.shift}${r.remark ? ' · '+r.remark : ''}</div>
-            </div>
-          </div>
-          <div class="right"><span class="${cls}">${value}</span></div>
-        </div>
-      `;
-    });
-    recordList.innerHTML = html;
-
-    recordList.querySelectorAll('.record-item').forEach(el => {
-      const id = Number(el.dataset.id);
-      el.addEventListener('click', () => openEditModal(id));
-      let startX = 0;
-      el.addEventListener('touchstart', e => { startX = e.touches[0].clientX; });
-      el.addEventListener('touchend', async e => {
-        const endX = e.changedTouches[0].clientX;
-        if (startX - endX > 60) {
-          if (confirm('删除此记录？')) {
-            await dbDel(STORE_WORK, id);
-            refreshAll();
-          }
+    window.checkPassword = function() {
+        var input = loginInput.value.trim();
+        if (input === correctPassword) {
+            loginModal.classList.remove('active');
+            // 解锁后初始化应用
+            initApp();
+        } else {
+            loginError.style.display = 'block';
+            loginInput.value = '';
+            loginInput.focus();
+            setTimeout(function() { loginError.style.display = 'none'; }, 2000);
         }
-      });
-    });
-  }
-}
+    };
 
-// ================================================================
-//  统计页
-// ================================================================
-let currentStatPeriod = 'week';
-
-async function renderStats() {
-  const now = new Date();
-  let startDate, endDate;
-  if (currentStatPeriod === 'week') {
-    startDate = getWeekStart(now);
-    endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + 6);
-  } else {
-    startDate = getMonthStart(now);
-    endDate = new Date(startDate);
-    endDate.setMonth(endDate.getMonth() + 1);
-    endDate.setDate(0);
-  }
-  const sStr = formatDate(startDate);
-  const eStr = formatDate(endDate);
-  const all = await dbGetAll(STORE_WORK);
-  const periodRecords = all.filter(r => r.date >= sStr && r.date <= eStr);
-
-  if (periodRecords.length === 0) {
-    statsContainer.innerHTML = '<div class="stat-empty">该周期暂无记录</div>';
-    statsOverview.style.display = 'none';
-    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-    return;
-  }
-
-  // 按天分组
-  const dayMap = {};
-  periodRecords.forEach(r => {
-    if (!dayMap[r.date]) dayMap[r.date] = { date: r.date, records: [], piece: 0, time: 0 };
-    dayMap[r.date].records.push(r);
-    if (r.type === 'piece') dayMap[r.date].piece += r.quantity;
-    else dayMap[r.date].time += r.duration;
-  });
-  const sortedKeys = Object.keys(dayMap).sort();
-  let html = '';
-  sortedKeys.forEach(key => {
-    const data = dayMap[key];
-    const d = new Date(key + 'T00:00:00');
-    const display = `${d.getMonth()+1}月${d.getDate()}日`;
-    const weekday = getDayOfWeek(d);
-    let detailHtml = '';
-    const sortedRecs = data.records.sort((a,b) => b.id - a.id);
-    sortedRecs.forEach(r => {
-      const brand = r.brand || '未命名';
-      const typeLabel = r.type === 'piece' ? '计件' : '计时';
-      const value = r.type === 'piece' ? `${r.quantity}件` : `${r.duration.toFixed(2)}h`;
-      const cls = r.type === 'piece' ? 'piece' : 'time';
-      detailHtml += `
-        <div class="record-item" data-id="${r.id}" style="margin-bottom:6px;">
-          <div class="left">
-            <span class="brand-badge">${brand}</span>
-            <div class="info">
-              <div class="type-label">${typeLabel}</div>
-              <div class="meta">${r.shift}${r.remark ? ' · '+r.remark : ''}</div>
-            </div>
-          </div>
-          <div class="right"><span class="${cls}">${value}</span></div>
-        </div>
-      `;
-    });
-    html += `
-      <div class="stat-day-card" data-date="${key}">
-        <div class="stat-day-header">
-          <div class="date-label">${display} <span class="weekday">${weekday}</span></div>
-          <div class="day-totals">
-            <span class="piece">${data.piece}件</span> · 
-            <span class="time">${data.time.toFixed(2)}h</span>
-            <span class="text-muted" style="font-size:12px;margin-left:6px;">(${data.records.length}条)</span>
-            <span class="arrow">▼</span>
-          </div>
-        </div>
-        <div class="stat-day-detail">${detailHtml}</div>
-      </div>
-    `;
-  });
-  statsContainer.innerHTML = html;
-
-  // 绑定展开/收起 + 记录编辑删除
-  statsContainer.querySelectorAll('.stat-day-card').forEach(card => {
-    const header = card.querySelector('.stat-day-header');
-    const detail = card.querySelector('.stat-day-detail');
-    const arrow = header.querySelector('.arrow');
-    header.addEventListener('click', function(e) {
-      if (e.target.closest('.record-item')) return;
-      const isOpen = detail.classList.toggle('open');
-      arrow.classList.toggle('open', isOpen);
-    });
-    detail.querySelectorAll('.record-item').forEach(item => {
-      const id = Number(item.dataset.id);
-      item.addEventListener('click', () => openEditModal(id));
-      let startX = 0;
-      item.addEventListener('touchstart', e => { startX = e.touches[0].clientX; });
-      item.addEventListener('touchend', async e => {
-        const endX = e.changedTouches[0].clientX;
-        if (startX - endX > 60) {
-          if (confirm('删除此记录？')) {
-            await dbDel(STORE_WORK, id);
-            refreshAll();
-          }
+    // 回车键触发登录
+    loginInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            checkPassword();
         }
-      });
     });
-  });
 
-  // 总览
-  const totalPiece = periodRecords.filter(r => r.type === 'piece').reduce((s, r) => s + r.quantity, 0);
-  const totalTime = periodRecords.filter(r => r.type === 'time').reduce((s, r) => s + r.duration, 0);
-  statsOverview.style.display = 'flex';
-  statsOverview.innerHTML = `
-    <div class="item"><div class="num">${periodRecords.length}</div><div class="label">记录数</div></div>
-    <div class="item"><div class="num" style="color:#007aff;">${totalPiece}</div><div class="label">计件总数</div></div>
-    <div class="item"><div class="num" style="color:#e67e22;">${totalTime.toFixed(2)}h</div><div class="label">计时总长</div></div>
-  `;
-
-  // 图表 - 品牌统计
-  const brandMap = {};
-  brandList.forEach(b => brandMap[b.name] = { piece: 0, time: 0 });
-  periodRecords.forEach(r => {
-    const b = brandMap[r.brand];
-    if (b) {
-      if (r.type === 'piece') b.piece += r.quantity;
-      else b.time += r.duration;
-    }
-  });
-  const labels = Object.keys(brandMap);
-  const pieceData = labels.map(k => brandMap[k].piece);
-  const timeData = labels.map(k => brandMap[k].time);
-
-  if (chartInstance) chartInstance.destroy();
-  const ctx = statChartCanvas.getContext('2d');
-  chartInstance = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: '计件总数', data: pieceData, backgroundColor: 'rgba(0,122,255,0.7)', borderRadius: 4 },
-        { label: '计时总时(h)', data: timeData, backgroundColor: 'rgba(230,126,34,0.7)', borderRadius: 4 }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: true, position: 'top' } },
-      scales: { y: { beginAtZero: true } }
-    }
-  });
-}
-
-// ================================================================
-//  模态框逻辑
-// ================================================================
-async function openEditModal(id) {
-  const all = await dbGetAll(STORE_WORK);
-  const rec = all.find(r => r.id === id);
-  if (!rec) return;
-  editingId = id;
-  modalTitle.textContent = '✏️ 编辑记录';
-  deleteBtn.style.display = 'block';
-
-  await loadBrands();
-  renderBrandSelect();
-  brandSelect.value = rec.brand || brandList[0]?.name || '';
-  selectedType = rec.type;
-  typeToggle.querySelectorAll('button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.type === selectedType);
-  });
-  toggleQuantityLabel();
-  if (rec.type === 'piece') quantityInput.value = rec.quantity;
-  else quantityInput.value = rec.duration.toFixed(2);
-  selectedShift = rec.shift || '早班';
-  shiftSelector.querySelectorAll('button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.shift === selectedShift);
-  });
-  workDate.value = rec.date;
-  noteInput.value = rec.remark || '';
-  modal.classList.add('show');
-  document.getElementById('bottomNav').classList.add('hidden');
-  setTimeout(() => quantityInput.focus(), 300);
-}
-
-function openAddModal() {
-  editingId = null;
-  modalTitle.textContent = '✏️ 新增记录';
-  deleteBtn.style.display = 'none';
-  if (brandList.length > 0) {
-    renderBrandSelect();
-    brandSelect.value = brandList[0].name;
-  } else {
-    loadBrands().then(() => {
-      renderBrandSelect();
-      brandSelect.value = brandList[0]?.name || '';
-    });
-  }
-  selectedType = 'piece';
-  typeToggle.querySelectorAll('button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.type === selectedType);
-  });
-  toggleQuantityLabel();
-  quantityInput.value = '';
-  selectedShift = '早班';
-  shiftSelector.querySelectorAll('button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.shift === selectedShift);
-  });
-  workDate.value = formatDate(currentDate);
-  noteInput.value = '';
-  modal.classList.add('show');
-  document.getElementById('bottomNav').classList.add('hidden');
-  setTimeout(() => quantityInput.focus(), 300);
-}
-
-function closeModal() {
-  modal.classList.remove('show');
-  document.getElementById('bottomNav').classList.remove('hidden');
-  editingId = null;
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; timerRunning = false; timerBtn.textContent = '⏱️'; }
-}
-
-function toggleQuantityLabel() {
-  if (selectedType === 'piece') {
-    quantityLabel.textContent = '数量';
-    quantityInput.placeholder = '0';
-  } else {
-    quantityLabel.textContent = '时长（小时）';
-    quantityInput.placeholder = '0.0';
-  }
-}
-
-typeToggle.addEventListener('click', (e) => {
-  const btn = e.target.closest('button');
-  if (!btn || btn.dataset.type === selectedType) return;
-  selectedType = btn.dataset.type;
-  typeToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.type === selectedType));
-  toggleQuantityLabel();
-  quantityInput.value = '';
-});
-
-shiftSelector.addEventListener('click', (e) => {
-  const btn = e.target.closest('button');
-  if (!btn) return;
-  shiftSelector.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  selectedShift = btn.dataset.shift;
-});
-
-saveBtn.addEventListener('click', async () => {
-  try {
-    if (brandList.length === 0) {
-      await loadBrands();
-      renderBrandSelect();
-    }
-    const brand = brandSelect.value;
-    if (!brand) { alert('请选择一个品牌'); return; }
-    const rawVal = quantityInput.value.trim();
-    if (!rawVal || isNaN(rawVal) || parseFloat(rawVal) <= 0) {
-      alert('请输入有效的正数');
-      return;
-    }
-    const val = parseFloat(rawVal);
-    const date = workDate.value;
-    if (!date) { alert('请选择日期'); return; }
-    const shift = selectedShift;
-    const remark = noteInput.value.trim();
-
-    const record = { brand, type: selectedType, shift, date, remark };
-    if (selectedType === 'piece') record.quantity = val;
-    else record.duration = val;
-
-    if (editingId) {
-      record.id = editingId;
-      await dbPut(STORE_WORK, record);
-    } else {
-      await dbAdd(STORE_WORK, record);
-    }
-    closeModal();
-    refreshAll();
-    alert('保存成功！');
-  } catch (err) {
-    alert('保存失败：' + err.message);
-  }
-});
-
-deleteBtn.addEventListener('click', async () => {
-  if (!editingId) return;
-  if (confirm('确定删除此记录？')) {
-    await dbDel(STORE_WORK, editingId);
-    closeModal();
-    refreshAll();
-  }
-});
-
-// ================================================================
-//  计时器
-// ================================================================
-let timerSeconds = 0;
-let timerInterval = null;
-let timerRunning = false;
-
-timerBtn.addEventListener('click', () => {
-  timerSeconds = 0;
-  timerDisplay.textContent = '00:00';
-  timerStartPause.textContent = '▶';
-  timerRunning = false;
-  timerOverlay.classList.add('show');
-});
-
-timerStartPause.addEventListener('click', () => {
-  if (!timerRunning) {
-    timerRunning = true;
-    timerStartPause.textContent = '⏸';
-    timerInterval = setInterval(() => {
-      timerSeconds++;
-      timerDisplay.textContent = formatTimeShort(timerSeconds);
-    }, 1000);
-  } else {
-    timerRunning = false;
-    timerStartPause.textContent = '▶';
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
-});
-
-timerStop.addEventListener('click', () => {
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-  timerRunning = false;
-  timerStartPause.textContent = '▶';
-  const hours = timerSeconds / 3600;
-  if (hours > 0) {
-    quantityInput.value = hours.toFixed(2);
-  } else {
-    alert('计时至少1秒才可保存');
-  }
-  timerOverlay.classList.remove('show');
-});
-
-timerClose.addEventListener('click', () => {
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-  timerRunning = false;
-  timerOverlay.classList.remove('show');
-});
-
-// ================================================================
-//  日期导航
-// ================================================================
-prevDayBtn.addEventListener('click', () => {
-  currentDate.setDate(currentDate.getDate() - 1);
-  refreshAll();
-});
-nextDayBtn.addEventListener('click', () => {
-  const today = new Date();
-  const next = new Date(currentDate);
-  next.setDate(next.getDate() + 1);
-  if (next > today) { alert('不能查看未来日期'); return; }
-  currentDate = next;
-  refreshAll();
-});
-
-// ================================================================
-//  导航切换（只在首页重置滚动，统计页保持用户滚动位置）
-// ================================================================
-document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
-  btn.addEventListener('click', function() {
-    const page = this.dataset.page;
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById('page-' + page).classList.add('active');
-    document.querySelectorAll('.nav-item[data-page]').forEach(b => b.classList.remove('active'));
-    this.classList.add('active');
-    
-    // 只有切换到「首页」时才重置滚动到顶部
-    if (page === 'home') {
-      document.getElementById('mainContent').scrollTop = 0;
-    }
-    // 切换到「统计」时，保留用户当前的滚动位置
-    
-    if (page === 'stats') renderStats();
-    if (page === 'home') renderHome();
-  });
-});
-
-// ================================================================
-//  统计周期切换
-// ================================================================
-statPeriodBtns.forEach(btn => {
-  btn.addEventListener('click', function() {
-    statPeriodBtns.forEach(b => b.classList.remove('active'));
-    this.classList.add('active');
-    currentStatPeriod = this.dataset.period;
-    renderStats();
-  });
-});
-
-// ================================================================
-//  设置 - 导入导出清除
-// ================================================================
-exportBtn.addEventListener('click', async () => {
-  const records = await dbGetAll(STORE_WORK);
-  const brands = await dbGetAll(STORE_BRAND);
-  const data = { records, brands };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `工作记录_${formatDate(new Date())}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-});
-
-importBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', function(e) {
-  const file = this.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async (ev) => {
-    try {
-      const data = JSON.parse(ev.target.result);
-      if (!data.records || !data.brands) { alert('文件格式不正确'); return; }
-      if (!confirm('导入将覆盖当前所有数据，确认？')) return;
-      const allWork = await dbGetAll(STORE_WORK);
-      for (const r of allWork) await dbDel(STORE_WORK, r.id);
-      const allBrand = await dbGetAll(STORE_BRAND);
-      for (const b of allBrand) await dbDel(STORE_BRAND, b.id);
-      for (const r of data.records) {
-        await dbAdd(STORE_WORK, r);
-      }
-      for (const b of data.brands) {
-        await dbAdd(STORE_BRAND, b);
-      }
-      await loadBrands();
-      renderBrandSelect();
-      renderBrandList();
-      refreshAll();
-      alert('导入成功！');
-    } catch (err) { alert('文件解析失败：' + err.message); }
-  };
-  reader.readAsText(file);
-  this.value = '';
-});
-
-clearBtn.addEventListener('click', async () => {
-  if (!confirm('⚠️ 确定清除所有数据吗？不可恢复！')) return;
-  const allWork = await dbGetAll(STORE_WORK);
-  for (const r of allWork) await dbDel(STORE_WORK, r.id);
-  const allBrand = await dbGetAll(STORE_BRAND);
-  for (const b of allBrand) await dbDel(STORE_BRAND, b.id);
-  await dbAdd(STORE_BRAND, { name: 'A品牌' });
-  await dbAdd(STORE_BRAND, { name: 'B品牌' });
-  await dbAdd(STORE_BRAND, { name: 'C品牌' });
-  await loadBrands();
-  renderBrandSelect();
-  renderBrandList();
-  refreshAll();
-  alert('已清除');
-});
-
-// ================================================================
-//  iOS 键盘处理
-// ================================================================
-const bottomNav = document.getElementById('bottomNav');
-document.querySelectorAll('input, select').forEach(el => {
-  el.addEventListener('focus', () => bottomNav.classList.add('hidden'));
-  el.addEventListener('blur', () => {
-    setTimeout(() => {
-      if (!modal.classList.contains('show') && !timerOverlay.classList.contains('show')) {
-        bottomNav.classList.remove('hidden');
-      }
-    }, 200);
-  });
-});
-
-modal.addEventListener('click', function(e) {
-  if (e.target === this) closeModal();
-});
-timerOverlay.addEventListener('click', function(e) {
-  if (e.target === this) {
-    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    timerRunning = false;
-    timerOverlay.classList.remove('show');
-  }
-});
-
-showAddBtn.addEventListener('click', openAddModal);
-
-// ================================================================
-//  刷新全部
-// ================================================================
-function refreshAll() {
-  renderHome();
-  if (document.getElementById('page-stats').classList.contains('active')) renderStats();
-}
-
-// ================================================================
-//  启动
-// ================================================================
-(async function init() {
-  await initDB();
-  await loadBrands();
-  renderBrandSelect();
-  renderBrandList();
-  const works = await dbGetAll(STORE_WORK);
-  if (works.length === 0) {
-    const today = formatDate(new Date());
-    await dbAdd(STORE_WORK, { date: today, shift: '早班', brand: 'A品牌', type: 'piece', quantity: 5, remark: '上午' });
-    await dbAdd(STORE_WORK, { date: today, shift: '中班', brand: 'B品牌', type: 'time', duration: 2.5, remark: '下午' });
-  }
-  renderHome();
-  document.querySelector('.nav-item[data-page="stats"]').addEventListener('click', renderStats);
+    // 初始锁定页面，禁止用户点击
+    loginModal.classList.add('active');
+    // 但需要先加载数据，以便登录后直接使用
+    // 数据加载将在 initApp 中执行
 })();
+
+// ===== 应用核心代码（原有逻辑，只是用函数包裹） =====
+var records = [];
+var brands = [];
+var currentMode = 'piece';
+var selectedTime = '早';
+var selectedBrand = '';
+var currentMonth = new Date();
+var currentWeekStart = getMonday(new Date());
+var editingId = null;
+var editingBrandName = '';
+var addBtnLocked = false;
+
+function migrateBrands(raw) {
+    if (!Array.isArray(raw)) return [{name:'品牌A',price:0},{name:'品牌B',price:0},{name:'品牌C',price:0}];
+    return raw.map(function(b) {
+        if (typeof b === 'string') return {name: b, price: 0};
+        if (b && typeof b === 'object' && b.name) return b;
+        return null;
+    }).filter(function(x){return x;});
+}
+
+function migrateRecords(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.map(function(r) {
+        if (r && !r.mode) r.mode = 'piece';
+        return r;
+    });
+}
+
+function loadData() {
+    try {
+        var rawR = JSON.parse(localStorage.getItem('pw_records') || '[]');
+        var rawB = JSON.parse(localStorage.getItem('pw_brands') || '[]');
+        records = migrateRecords(rawR);
+        brands = migrateBrands(rawB);
+    } catch (e) {
+        records = [];
+        brands = [{name:'品牌A',price:0},{name:'品牌B',price:0},{name:'品牌C',price:0}];
+    }
+}
+
+function saveData() {
+    localStorage.setItem('pw_records', JSON.stringify(records));
+    localStorage.setItem('pw_brands', JSON.stringify(brands));
+}
+
+function getPrice(brandName) {
+    for (var i = 0; i < brands.length; i++) {
+        if (brands[i].name === brandName) return (Number(brands[i].price) || 0);
+    }
+    return 0;
+}
+
+function getBrandObj(name) {
+    for (var i = 0; i < brands.length; i++) {
+        if (brands[i].name === name) return brands[i];
+    }
+    var obj = {name: name, price: 0};
+    brands.push(obj);
+    return obj;
+}
+
+function today() {
+    return new Date().toISOString().split('T')[0];
+}
+
+function getMonday(d) {
+    var day = d.getDay();
+    var diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    var mon = new Date(d);
+    mon.setDate(diff);
+    mon.setHours(0,0,0,0);
+    return mon;
+}
+
+function formatDate(d) {
+    return d.toISOString().split('T')[0];
+}
+
+function weekdayName(i) {
+    return ['一','二','三','四','五','六','日'][i];
+}
+
+function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function showToast(msg, type) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + (type || 'success') + ' show';
+    setTimeout(function() { t.className = 'toast'; }, 2200);
+}
+
+function switchMode(mode) {
+    currentMode = mode;
+    document.getElementById('modePieceBtn').classList.toggle('active', mode === 'piece');
+    document.getElementById('modeHourBtn').classList.toggle('active', mode === 'hour');
+    document.getElementById('pieceFields').classList.toggle('hidden', mode !== 'piece');
+    document.getElementById('hourFields').classList.toggle('hidden', mode !== 'hour');
+}
+
+function initApp() {
+    loadData();
+    if (brands.length === 0) {
+        brands = [{name:'品牌A',price:0},{name:'品牌B',price:0},{name:'品牌C',price:0}];
+    }
+    var dateInput = document.getElementById('recordDateInput');
+    if (dateInput) dateInput.value = today();
+    renderAll();
+    // 绑定事件（因为有些事件在HTML中已绑定，额外绑定一些动态事件）
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('time-pill') && !e.target.closest('#editTimePills')) {
+            var pills = document.querySelectorAll('.time-pills:not(#editTimePills) .time-pill');
+            for (var i = 0; i < pills.length; i++) pills[i].classList.remove('active');
+            e.target.classList.add('active');
+            selectedTime = e.target.getAttribute('data-time');
+        }
+        if (e.target.classList.contains('time-pill') && e.target.closest('#editTimePills')) {
+            var pills2 = document.querySelectorAll('#editTimePills .time-pill');
+            for (var i = 0; i < pills2.length; i++) pills2[i].classList.remove('active');
+            e.target.classList.add('active');
+        }
+    });
+    document.addEventListener('change', function(e) {
+        if (e.target.id === 'recordDateInput') {
+            renderTodayRecords();
+            if (e.target.value === today()) {
+                updateHomeStats();
+            } else {
+                updateDateStats(e.target.value);
+            }
+        }
+    });
+}
+
+function renderAll() {
+    updateDate();
+    renderBrandChips();
+    renderTodayRecords();
+    updateHomeStats();
+    renderBrandManageList();
+}
+
+function updateDate() {
+    var d = new Date();
+    var week = ['日','一','二','三','四','五','六'];
+    document.getElementById('currentDate').textContent =
+        d.getFullYear() + '年' + (d.getMonth()+1) + '月' + d.getDate() + '日 周' + week[d.getDay()];
+}
+
+function switchPage(page, btn) {
+    var pages = document.querySelectorAll('.page');
+    for (var i = 0; i < pages.length; i++) pages[i].classList.remove('active');
+    var tabs = document.querySelectorAll('.tab-btn');
+    for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+    document.getElementById('page-' + page).classList.add('active');
+    btn.classList.add('active');
+    if (page === 'stats') { renderMonthStats(); renderWeekStats(); }
+    if (page === 'settings') renderBrandManageList();
+}
+
+function renderBrandChips() {
+    var c = document.getElementById('brandChips');
+    c.innerHTML = '';
+    var freq = {};
+    records.forEach(function(r) { if (r.mode !== 'hour') freq[r.brand] = (freq[r.brand]||0) + r.quantity; });
+    var sorted = brands.slice();
+    sorted.sort(function(a,b) { return (freq[b.name]||0) - (freq[a.name]||0); });
+    sorted.forEach(function(b) {
+        var name = b.name;
+        var el = document.createElement('div');
+        el.className = 'brand-chip' + (selectedBrand === name ? ' active' : '');
+        el.textContent = name + (b.price > 0 ? ' ¥' + b.price : '');
+        el.onclick = function(n) { return function() {
+            selectedBrand = (selectedBrand === n) ? '' : n;
+            document.getElementById('brandInput').value = '';
+            renderBrandChips();
+        }; }(name);
+        c.appendChild(el);
+    });
+}
+
+function addRecord() {
+    if (addBtnLocked) return;
+    var dateVal = document.getElementById('recordDateInput').value;
+    if (!dateVal) { showToast('请选择日期','error'); return; }
+
+    if (currentMode === 'piece') {
+        var inputVal = document.getElementById('brandInput').value.trim();
+        var brand = inputVal || selectedBrand;
+        var qtyRaw = document.getElementById('qtyInput').value;
+        var qty = parseInt(qtyRaw);
+        if (!brand) { showToast('请选择或输入品牌','error'); return; }
+        if (!qtyRaw || qty <= 0 || qty > 99999) { showToast('请输入有效数量','error'); return; }
+        getBrandObj(brand);
+        records.push({ id:Date.now(), date:dateVal, time:selectedTime, brand:brand, quantity:qty, mode:'piece', edited:false });
+        showToast('计件记录已添加');
+    } else {
+        var hoursRaw = document.getElementById('hoursInput').value;
+        var note = document.getElementById('hourNoteInput').value.trim();
+        var hours = parseFloat(hoursRaw);
+        if (!hoursRaw || hours <= 0 || hours > 24) { showToast('请输入有效工时','error'); return; }
+        records.push({ id:Date.now(), date:dateVal, time:selectedTime, mode:'hour', hours:hours, note:note, edited:false });
+        showToast('计时记录已添加（' + hours + 'h）');
+    }
+
+    saveData();
+    if (currentMode === 'piece') {
+        document.getElementById('qtyInput').value = '';
+        document.getElementById('brandInput').value = '';
+    } else {
+        document.getElementById('hoursInput').value = '';
+        document.getElementById('hourNoteInput').value = '';
+    }
+    addBtnLocked = true;
+    setTimeout(function() { addBtnLocked = false; }, 500);
+    renderAll();
+}
+
+function renderTodayRecords() {
+    var dateVal = document.getElementById('recordDateInput').value || today();
+    var label = dateVal === today() ? '今日记录' : (dateVal + ' 记录');
+    document.getElementById('recordListTitle').textContent = label;
+
+    var list = records.filter(function(r) { return r.date === dateVal; });
+    var order = {'早':0, '中':1, '晚':2};
+    list.sort(function(a,b) {
+        return (order[a.time]!=null?order[a.time]:9) - (order[b.time]!=null?order[b.time]:9) || b.id - a.id;
+    });
+
+    var el = document.getElementById('todayRecordList');
+    if (list.length === 0) {
+        el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><div>' + label + '暂无记录</div></div>';
+        return;
+    }
+    el.innerHTML = '';
+    list.forEach(function(r) {
+        var isHour = r.mode === 'hour';
+        var qtyText = '', brandText = '', incomeText = '';
+        if (isHour) {
+            qtyText = r.hours + 'h';
+            brandText = '计时' + (r.note ? ' · ' + r.note : '');
+        } else {
+            var income = getPrice(r.brand) * r.quantity;
+            qtyText = r.quantity + '件';
+            incomeText = income > 0 ? '¥' + income.toFixed(1) : '';
+            brandText = r.brand;
+        }
+        var tc = r.time === '早' ? 'morning' : r.time === '中' ? 'noon' : 'evening';
+        var row = document.createElement('div');
+        row.className = 'record-row';
+        row.innerHTML =
+            '<div class="record-time-badge ' + tc + '">' + escapeHtml(r.time) + '</div>' +
+            '<div class="record-center">' +
+                '<div class="record-brand-name">' + escapeHtml(brandText) + '</div>' +
+                '<div class="record-time-text">' + r.date + (r.edited ? ' *' : '') + '</div>' +
+                '<span class="record-mode-tag ' + (isHour ? 'hour' : 'piece') + '">' + (isHour ? '计时' : '计件') + '</span>' +
+            '</div>' +
+            '<div class="record-qty-area">' +
+                '<div class="record-qty">' + qtyText + '</div>' +
+                (incomeText ? '<div class="record-income">' + incomeText + '</div>' : '') +
+            '</div>' +
+            '<div class="record-actions">' +
+                '<button class="record-action-btn" onclick="event.stopPropagation();editRecord(' + r.id + ')">✏</button>' +
+                '<button class="record-action-btn" onclick="event.stopPropagation();deleteRecord(' + r.id + ')">✕</button>' +
+            '</div>';
+        row.onclick = function(rid) { return function() { editRecord(rid); }; }(r.id);
+        el.appendChild(row);
+    });
+}
+
+function deleteRecord(id) {
+    if (!confirm('确定删除此记录？')) return;
+    records = records.filter(function(r) { return r.id !== id; });
+    saveData(); renderAll(); showToast('已删除');
+}
+
+function editRecord(id) {
+    var r = null;
+    for (var i = 0; i < records.length; i++) { if (records[i].id === id) { r = records[i]; break; } }
+    if (!r) return;
+    editingId = id;
+    var isHour = r.mode === 'hour';
+    document.getElementById('editModeLabel').textContent = isHour ? '计时模式' : '计件模式';
+
+    var pills = document.querySelectorAll('#editTimePills .time-pill');
+    for (var i = 0; i < pills.length; i++) {
+        pills[i].classList.toggle('active', pills[i].getAttribute('data-time') === r.time);
+    }
+
+    document.getElementById('editPieceField').classList.toggle('hidden', isHour);
+    document.getElementById('editQtyField').classList.toggle('hidden', isHour);
+    document.getElementById('editHoursField').classList.toggle('hidden', !isHour);
+    document.getElementById('editNoteField').classList.toggle('hidden', !isHour);
+
+    if (isHour) {
+        document.getElementById('editHours').value = r.hours || '';
+        document.getElementById('editNote').value = r.note || '';
+    } else {
+        document.getElementById('editBrand').value = r.brand || '';
+        document.getElementById('editQty').value = r.quantity || '';
+    }
+    showModal('editModal');
+}
+
+function saveEdit() {
+    var r = null;
+    for (var i = 0; i < records.length; i++) { if (records[i].id === editingId) { r = records[i]; break; } }
+    if (!r) return;
+    var isHour = r.mode === 'hour';
+    var activePill = document.querySelector('#editTimePills .time-pill.active');
+    var newTime = activePill ? activePill.getAttribute('data-time') : r.time;
+
+    if (isHour) {
+        var hours = parseFloat(document.getElementById('editHours').value);
+        var note = document.getElementById('editNote').value.trim();
+        if (!hours || hours <= 0) { showToast('请输入有效工时','error'); return; }
+        r.hours = hours; r.note = note;
+        delete r.hourlyRate;
+    } else {
+        var brand = document.getElementById('editBrand').value.trim();
+        var qty = parseInt(document.getElementById('editQty').value);
+        if (!brand) { showToast('请输入品牌','error'); return; }
+        if (!qty || qty <= 0) { showToast('请输入有效数量','error'); return; }
+        getBrandObj(brand);
+        r.brand = brand; r.quantity = qty;
+    }
+    r.time = newTime;
+    r.edited = true;
+    saveData(); hideModal('editModal'); renderAll(); showToast('已更新');
+}
+
+function updateHomeStats() {
+    var ym = new Date().toISOString().slice(0,7);
+    var todayStr = today();
+    var todayRecords = records.filter(function(r) { return r.date === todayStr; });
+    var monthRecords = records.filter(function(r) { return r.date.indexOf(ym) === 0; });
+
+    var pieceToday = todayRecords.filter(function(r) { return r.mode !== 'hour'; });
+    var hourToday = todayRecords.filter(function(r) { return r.mode === 'hour'; });
+    var pieceMonth = monthRecords.filter(function(r) { return r.mode !== 'hour'; });
+    var hourMonth = monthRecords.filter(function(r) { return r.mode === 'hour'; });
+
+    var todayPieceQty = 0;
+    pieceToday.forEach(function(r) { todayPieceQty += r.quantity; });
+    var todayHours = 0;
+    hourToday.forEach(function(r) { todayHours += (r.hours || 0); });
+
+    var todayPieceInc = 0;
+    pieceToday.forEach(function(r) { todayPieceInc += getPrice(r.brand) * r.quantity; });
+    var todayIncome = todayPieceInc;
+
+    var monthPieceQty = 0;
+    pieceMonth.forEach(function(r) { monthPieceQty += r.quantity; });
+    var monthHours = 0;
+    hourMonth.forEach(function(r) { monthHours += (r.hours || 0); });
+    var monthPieceInc = 0;
+    pieceMonth.forEach(function(r) { monthPieceInc += getPrice(r.brand) * r.quantity; });
+    var monthIncome = monthPieceInc;
+
+    document.getElementById('headerPieceQty').textContent = todayPieceQty + '件';
+    document.getElementById('headerPieceSub').textContent = todayPieceInc > 0 ? '¥' + todayPieceInc.toFixed(0) : '';
+    document.getElementById('headerHours').textContent = todayHours.toFixed(1) + 'h';
+    document.getElementById('headerHourSub').textContent = hourToday.length > 0 ? hourToday.length + '次计时' : '';
+
+    var m = 0, n = 0, e = 0;
+    pieceToday.forEach(function(r) { if(r.time==='早') m+=r.quantity; if(r.time==='中') n+=r.quantity; if(r.time==='晚') e+=r.quantity; });
+    document.getElementById('todayMorning').textContent = m;
+    document.getElementById('todayNoon').textContent = n;
+    document.getElementById('todayEvening').textContent = e;
+
+    document.getElementById('monthIncome').textContent = '¥' + monthIncome.toFixed(1);
+    document.getElementById('monthIncomeSub').textContent = '计件' + monthPieceQty + '件 · 计时' + monthHours.toFixed(1) + 'h';
+
+    var lastMonth = new Date(); lastMonth.setMonth(lastMonth.getMonth()-1);
+    var lastYM = lastMonth.toISOString().slice(0,7);
+    var lastRec = records.filter(function(r) { return r.date.indexOf(lastYM) === 0; });
+    var lastPieceQty = 0;
+    lastRec.filter(function(r){return r.mode!=='hour';}).forEach(function(r){ lastPieceQty += r.quantity; });
+    var lastInc = 0;
+    lastRec.forEach(function(r) {
+        if (r.mode!=='hour') lastInc += getPrice(r.brand)*r.quantity;
+    });
+    var qtyCmp = lastPieceQty>0 ? Math.round((monthPieceQty-lastPieceQty)/lastPieceQty*100) : null;
+    var incCmp = lastInc>0 ? Math.round((monthIncome-lastInc)/lastInc*100) : null;
+    var qtyEl = document.getElementById('cmpQty');
+    var incEl = document.getElementById('cmpIncome');
+    qtyEl.textContent = qtyCmp!==null?(qtyCmp>=0?'▲':'\u25bc')+Math.abs(qtyCmp)+'%':'--';
+    qtyEl.className = 'income-cmp-val' + (qtyCmp!==null?(qtyCmp>=0?' up':' down'):'');
+    incEl.textContent = incCmp!==null?(incCmp>=0?'▲':'\u25bc')+Math.abs(incCmp)+'%':'--';
+    incEl.className = 'income-cmp-val' + (incCmp!==null?(incCmp>=0?' up':' down'):'');
+
+    updateStreak();
+}
+
+function updateDateStats(dateStr) {
+    var dateRecords = records.filter(function(r) { return r.date === dateStr; });
+    var pieceR = dateRecords.filter(function(r) { return r.mode !== 'hour'; });
+    var hourR = dateRecords.filter(function(r) { return r.mode === 'hour'; });
+    var totalQty = 0;
+    pieceR.forEach(function(r) { totalQty += r.quantity; });
+    var totalInc = 0;
+    pieceR.forEach(function(r) { totalInc += getPrice(r.brand) * r.quantity; });
+    var totalHours = 0;
+    hourR.forEach(function(r) { totalHours += (r.hours || 0); });
+    document.getElementById('headerPieceQty').textContent = totalQty + '件';
+    document.getElementById('headerPieceSub').textContent = totalInc > 0 ? '¥' + totalInc.toFixed(0) : '';
+    document.getElementById('headerHours').textContent = totalHours.toFixed(1) + 'h';
+    document.getElementById('headerHourSub').textContent = hourR.length > 0 ? hourR.length + '次' : '';
+    var m = 0, n = 0, e = 0;
+    pieceR.forEach(function(r) { if(r.time==='早') m+=r.quantity; if(r.time==='中') n+=r.quantity; if(r.time==='晚') e+=r.quantity; });
+    document.getElementById('todayMorning').textContent = m;
+    document.getElementById('todayNoon').textContent = n;
+    document.getElementById('todayEvening').textContent = e;
+}
+
+function updateStreak() {
+    if (records.length === 0) { document.getElementById('streakBadge').textContent = '0天'; return; }
+    var dates = {};
+    records.forEach(function(r) { dates[r.date] = true; });
+    var streak = 0;
+    var d = new Date(); d.setHours(0,0,0,0);
+    var check = new Date(d);
+    if (!dates[formatDate(check)]) check.setDate(check.getDate() - 1);
+    for (var i = 0; i < 400; i++) {
+        if (dates[formatDate(check)]) { streak++; check.setDate(check.getDate() - 1); }
+        else break;
+    }
+    document.getElementById('streakBadge').textContent = streak + '天';
+}
+
+function switchStatsTab(tab, btn) {
+    var tabs = document.querySelectorAll('.stats-tab');
+    for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+    btn.classList.add('active');
+    document.getElementById('statsMonthView').classList.toggle('hidden', tab !== 'month');
+    document.getElementById('statsWeekView').classList.toggle('hidden', tab !== 'week');
+    if (tab === 'month') renderMonthStats();
+    else renderWeekStats();
+}
+
+function changeMonth(delta) {
+    currentMonth.setMonth(currentMonth.getMonth() + delta);
+    renderMonthStats();
+}
+
+function renderMonthStats() {
+    var ym = currentMonth.toISOString().slice(0,7);
+    document.getElementById('monthText').textContent = currentMonth.getFullYear() + '年' + (currentMonth.getMonth()+1) + '月';
+    var mr = records.filter(function(r) { return r.date.indexOf(ym) === 0; });
+    var days = {};
+    mr.forEach(function(r) { days[r.date] = true; });
+    var dayList = Object.keys(days).sort();
+    var workDays = dayList.length;
+
+    var pieceR = mr.filter(function(r) { return r.mode !== 'hour'; });
+    var hourR = mr.filter(function(r) { return r.mode === 'hour'; });
+    var totalQty = 0;
+    pieceR.forEach(function(r) { totalQty += r.quantity; });
+    var pieceInc = 0;
+    pieceR.forEach(function(r) { pieceInc += getPrice(r.brand) * r.quantity; });
+    var totalHours = 0;
+    hourR.forEach(function(r) { totalHours += (r.hours || 0); });
+
+    var daySums = {};
+    pieceR.forEach(function(r) { daySums[r.date] = (daySums[r.date]||0) + r.quantity; });
+    var maxDay = 0, minDay = 0;
+    var sumVals = [];
+    for (var k in daySums) sumVals.push(daySums[k]);
+    if (sumVals.length > 0) { maxDay = Math.max.apply(null, sumVals); minDay = Math.min.apply(null, sumVals); }
+
+    var brandQty = {}, brandInc = {};
+    pieceR.forEach(function(r) {
+        brandQty[r.brand] = (brandQty[r.brand]||0) + r.quantity;
+        brandInc[r.brand] = (brandInc[r.brand]||0) + getPrice(r.brand)*r.quantity;
+    });
+    var sortedBrands = Object.entries(brandQty).sort(function(a,b){return b[1]-a[1];});
+    var maxBrandQty = sortedBrands.length > 0 ? sortedBrands[0][1] : 0;
+
+    var last7 = [];
+    for (var i = 6; i >= 0; i--) {
+        var d2 = new Date(); d2.setDate(d2.getDate() - i);
+        var key = formatDate(d2);
+        var qty = 0;
+        pieceR.filter(function(r){return r.date===key;}).forEach(function(r){qty+=r.quantity;});
+        var hrs = 0;
+        hourR.filter(function(r){return r.date===key;}).forEach(function(r){hrs+=(r.hours||0);});
+        last7.push({ date:key, label:(d2.getMonth()+1)+'/'+d2.getDate(), qty:qty, hours:hrs });
+    }
+    var max7 = 1;
+    last7.forEach(function(x) { if(x.qty>max7) max7=x.qty; });
+
+    var html = '';
+
+    html += '<div class="overview-grid">' +
+        '<div class="ov-card gradient"><div class="ov-label">计件总件数</div><div class="ov-value">' + totalQty + '</div><div class="ov-sub">' + pieceR.length + '条计件</div></div>' +
+        '<div class="ov-card green"><div class="ov-label">计件收入</div><div class="ov-value">¥' + pieceInc.toFixed(1) + '</div><div class="ov-sub">日均' + (workDays>0?Math.round(totalQty/workDays):0) + '件</div></div>' +
+        '<div class="ov-card cyan"><div class="ov-label">计时总工时</div><div class="ov-value">' + totalHours.toFixed(1) + 'h</div><div class="ov-sub">' + hourR.length + '次计时</div></div>' +
+        '<div class="ov-card orange"><div class="ov-label">工作天数</div><div class="ov-value">' + workDays + '</div><div class="ov-sub">最高' + maxDay + ' · 最低' + minDay + '</div></div>' +
+        '</div>';
+
+    html += '<div class="sec-title">最近7天</div><div class="chart-card">';
+    last7.forEach(function(x) {
+        var pct = Math.round(x.qty / max7 * 100);
+        if (pct < 3) pct = 3;
+        var isToday = x.date === today();
+        var hourLabel = x.hours > 0 ? ' <span style="font-size:10px;color:var(--orange)">+' + x.hours.toFixed(1) + 'h</span>' : '';
+        html += '<div class="bar-row"><div class="bar-label">' + x.label + '</div><div class="bar-track"><div class="bar-fill' + (isToday?' today':'') + '" style="width:' + pct + '%"></div></div><div class="bar-val">' + x.qty + '件' + hourLabel + '</div></div>';
+    });
+    html += '</div>';
+
+    if (sortedBrands.length > 0) {
+        html += '<div class="sec-title">品牌排名（计件）</div>';
+        var rCls = ['rank-gold','rank-silver','rank-bronze'];
+        sortedBrands.forEach(function(item, idx) {
+            var b = item[0], q = item[1];
+            var inc = brandInc[b] || 0;
+            var pct = totalQty > 0 ? Math.round(q / totalQty * 100) : 0;
+            var bpct = maxBrandQty > 0 ? Math.round(q / maxBrandQty * 100) : 0;
+            var rc = rCls[idx] || 'rank-normal';
+            html += '<div class="brand-pct-item">' +
+                '<div class="brand-pct-rank ' + rc + '">' + (idx+1) + '</div>' +
+                '<div class="brand-pct-info"><div class="brand-pct-name">' + escapeHtml(b) + '</div><div class="brand-pct-bar-bg"><div class="brand-pct-bar-fill" style="width:' + bpct + '%"></div></div></div>' +
+                '<div class="brand-pct-right"><div class="brand-pct-qty">' + q + '件</div><div class="brand-pct-income">¥' + inc.toFixed(1) + '</div><div class="brand-pct-pct">' + pct + '%</div></div>' +
+                '</div>';
+        });
+    }
+
+    if (hourR.length > 0) {
+        html += '<div class="sec-title">本月计时记录</div><div class="card" style="margin-bottom:18px">';
+        html += '<div style="padding:14px"><div style="font-size:13px;color:var(--gray-400);margin-bottom:6px">计时总工时</div><div style="font-size:24px;font-weight:800;color:var(--cyan)">' + totalHours.toFixed(1) + 'h</div><div style="font-size:12px;color:var(--gray-400);margin-top:4px">' + hourR.length + '次记录</div></div>';
+        var hourByDate = {};
+        hourR.forEach(function(r) {
+            if (!hourByDate[r.date]) hourByDate[r.date] = [];
+            hourByDate[r.date].push(r);
+        });
+        Object.keys(hourByDate).sort().forEach(function(date) {
+            var list = hourByDate[date];
+            var sum = 0;
+            list.forEach(function(r) { sum += (r.hours||0); });
+            var times = list.map(function(r){return r.time;}).join('、');
+            html += '<div class="time-stat-row">' +
+                '<div><div class="time-stat-date">' + date.slice(5) + '</div><div class="time-stat-detail">' + list.length + '次 · ' + times + '</div></div>' +
+                '<div class="time-stat-val">' + sum.toFixed(1) + 'h</div></div>';
+        });
+        html += '</div>';
+    }
+
+    html += '<div class="sec-title">每日明细</div>';
+    if (dayList.length === 0) {
+        html += '<div class="empty"><div class="empty-icon">📋</div><div>本月暂无记录</div></div>';
+    } else {
+        dayList.reverse().forEach(function(date) {
+            var dr = mr.filter(function(r) { return r.date === date; });
+            var pi = dr.filter(function(r) { return r.mode !== 'hour'; });
+            var hi = dr.filter(function(r) { return r.mode === 'hour'; });
+            var dt = 0;
+            pi.forEach(function(r) { dt += r.quantity; });
+            var di = 0;
+            pi.forEach(function(r) { di += getPrice(r.brand)*r.quantity; });
+            var dh = 0;
+            hi.forEach(function(r) { dh += (r.hours||0); });
+            var bb = {};
+            pi.forEach(function(r) { bb[r.brand] = (bb[r.brand]||0) + r.quantity; });
+            var tb = {'早':0,'中':0,'晚':0};
+            pi.forEach(function(r) { if (tb[r.time]!==undefined) tb[r.time] += r.quantity; });
+            var wd = ['日','一','二','三','四','五','六'][new Date(date).getDay()];
+            var isT = date === today();
+            var rows = '';
+            Object.entries(bb).forEach(function(item) {
+                var b = item[0], q = item[1];
+                var bi = 0;
+                pi.filter(function(r){return r.brand===b;}).forEach(function(r){bi+=getPrice(r.brand)*r.quantity;});
+                rows += '<div class="day-brand-row"><span class="day-brand-row-name">' + escapeHtml(b) + '</span><span class="day-brand-row-right"><span class="day-brand-row-qty">' + q + '件</span><span class="day-brand-row-income"> ¥' + bi.toFixed(1) + '</span></span></div>';
+            });
+            hi.forEach(function(r) {
+                rows += '<div class="day-brand-row"><span class="day-brand-row-name">计时' + (r.note?' · '+escapeHtml(r.note):'') + '</span><span class="day-brand-row-right"><span class="day-brand-row-qty" style="color:var(--cyan)">' + r.hours + 'h</span></span></div>';
+            });
+            var totalLabel = dt + '件';
+            if (dh > 0) totalLabel += ' + ' + dh.toFixed(1) + 'h';
+            html += '<div class="day-card">' +
+                '<div class="day-card-head"><div><div class="day-card-date">' + date.slice(5) + '<span class="day-card-week"> 周' + wd + (isT?' · 今天':'') + '</span></div><div class="day-card-income">收入 ¥' + di.toFixed(1) + '</div></div>' +
+                '<div class="day-card-total">' + totalLabel + '</div></div>' +
+                '<div class="day-card-body"><div class="day-time-cols">' +
+                    '<div class="day-time-col"><div class="day-time-col-label">早</div><div class="day-time-col-val">' + tb['早'] + '</div></div>' +
+                    '<div class="day-time-col"><div class="day-time-col-label">中</div><div class="day-time-col-val">' + tb['中'] + '</div></div>' +
+                    '<div class="day-time-col"><div class="day-time-col-label">晚</div><div class="day-time-col-val">' + tb['晚'] + '</div></div>' +
+                '</div><div class="day-brand-rows">' + rows + '</div></div></div>';
+        });
+    }
+    document.getElementById('monthStatsContent').innerHTML = html;
+}
+
+function changeWeek(delta) {
+    currentWeekStart.setDate(currentWeekStart.getDate() + delta * 7);
+    renderWeekStats();
+}
+
+function renderWeekStats() {
+    var we = new Date(currentWeekStart); we.setDate(we.getDate() + 6);
+    document.getElementById('weekText').textContent = (currentWeekStart.getMonth()+1) + '/' + currentWeekStart.getDate() + ' - ' + (we.getMonth()+1) + '/' + we.getDate();
+    var wd = [];
+    for (var i = 0; i < 7; i++) { var d2 = new Date(currentWeekStart); d2.setDate(d2.getDate() + i); wd.push(formatDate(d2)); }
+    var wr = records.filter(function(r) { return wd.indexOf(r.date) >= 0; });
+    var pieceW = wr.filter(function(r) { return r.mode !== 'hour'; });
+    var hourW = wr.filter(function(r) { return r.mode === 'hour'; });
+    var totalQty = 0;
+    pieceW.forEach(function(r) { totalQty += r.quantity; });
+    var totalInc = 0;
+    pieceW.forEach(function(r) { totalInc += getPrice(r.brand) * r.quantity; });
+    var totalHours = 0;
+    hourW.forEach(function(r) { totalHours += (r.hours||0); });
+    var maxQty = 0;
+    wd.forEach(function(d) {
+        var q = 0;
+        pieceW.filter(function(r){return r.date===d;}).forEach(function(r){q+=r.quantity;});
+        if (q > maxQty) maxQty = q;
+    });
+    if (maxQty < 1) maxQty = 1;
+
+    var workDays = {};
+    wr.forEach(function(r) { workDays[r.date] = true; });
+    var workDaysCount = Object.keys(workDays).length;
+
+    var html = '';
+    html += '<div class="overview-grid">' +
+        '<div class="ov-card gradient"><div class="ov-label">本周计件</div><div class="ov-value">' + totalQty + '件</div><div class="ov-sub">' + pieceW.length + '条计件</div></div>' +
+        '<div class="ov-card green"><div class="ov-label">本周收入</div><div class="ov-value">¥' + totalInc.toFixed(1) + '</div><div class="ov-sub">日均' + (workDaysCount>0?Math.round(totalQty/workDaysCount):0) + '件</div></div>' +
+        '<div class="ov-card cyan"><div class="ov-label">本周计时</div><div class="ov-value">' + totalHours.toFixed(1) + 'h</div><div class="ov-sub">' + hourW.length + '次计时</div></div>' +
+        '<div class="ov-card orange"><div class="ov-label">工作天数</div><div class="ov-value">' + workDaysCount + '</div><div class="ov-sub">共7天</div></div>' +
+        '</div>';
+
+    html += '<div class="sec-title">本周每日</div><div class="chart-card"><div class="week-chart">';
+    var todayStr = today();
+    wd.forEach(function(d) {
+        var qty = 0;
+        pieceW.filter(function(r){return r.date===d;}).forEach(function(r){qty+=r.quantity;});
+        var hrs = 0;
+        hourW.filter(function(r){return r.date===d;}).forEach(function(r){hrs+=(r.hours||0);});
+        var h = Math.round(qty / maxQty * 90) + 8;
+        var isT = d === todayStr;
+        var hourLabel = hrs > 0 ? '<br><span style="color:var(--cyan)">' + hrs.toFixed(1) + 'h</span>' : '';
+        html += '<div class="week-bar-col"><div class="week-bar-val">' + (qty>0?qty:'') + hourLabel + '</div><div class="week-bar' + (isT?' today':'') + '" style="height:' + h + 'px"></div><div class="week-bar-label">周' + weekdayName(new Date(d).getDay()-1) + '</div></div>';
+    });
+    html += '</div></div>';
+
+    var bS = {}, bI = {};
+    pieceW.forEach(function(r) { bS[r.brand] = (bS[r.brand]||0) + r.quantity; bI[r.brand] = (bI[r.brand]||0) + getPrice(r.brand)*r.quantity; });
+    var sB = Object.entries(bS).sort(function(a,b){return b[1]-a[1];});
+    if (sB.length > 0) {
+        html += '<div class="sec-title">本周品牌（计件）</div>';
+        var rC = ['rank-gold','rank-silver','rank-bronze'];
+        sB.forEach(function(item, idx) {
+            var b = item[0], q = item[1];
+            var pct = totalQty>0 ? Math.round(q/totalQty*100) : 0;
+            html += '<div class="brand-pct-item"><div class="brand-pct-rank '+(rC[idx]||'rank-normal')+'">'+(idx+1)+'</div><div class="brand-pct-info"><div class="brand-pct-name">'+escapeHtml(b)+'</div></div><div class="brand-pct-right"><div class="brand-pct-qty">'+q+'件</div><div class="brand-pct-income">¥'+(bI[b]||0).toFixed(1)+'</div><div class="brand-pct-pct">'+pct+'%</div></div></div>';
+        });
+    }
+
+    if (hourW.length > 0) {
+        html += '<div class="sec-title">本周计时记录</div><div class="card" style="margin-bottom:18px">';
+        html += '<div style="padding:14px"><div style="font-size:13px;color:var(--gray-400);margin-bottom:6px">计时总工时</div><div style="font-size:24px;font-weight:800;color:var(--cyan)">' + totalHours.toFixed(1) + 'h</div><div style="font-size:12px;color:var(--gray-400);margin-top:4px">' + hourW.length + '次记录</div></div>';
+        var hByDate = {};
+        hourW.forEach(function(r) {
+            if (!hByDate[r.date]) hByDate[r.date] = [];
+            hByDate[r.date].push(r);
+        });
+        Object.keys(hByDate).sort().forEach(function(date) {
+            var list = hByDate[date];
+            var sum = 0;
+            list.forEach(function(r) { sum += (r.hours||0); });
+            var times = list.map(function(r){return r.time;}).join('、');
+            html += '<div class="time-stat-row">' +
+                '<div><div class="time-stat-date">' + date.slice(5) + '</div><div class="time-stat-detail">' + list.length + '次 · ' + times + '</div></div>' +
+                '<div class="time-stat-val">' + sum.toFixed(1) + 'h</div></div>';
+        });
+        html += '</div>';
+    }
+
+    document.getElementById('weekStatsContent').innerHTML = html;
+}
+
+function renderBrandManageList() {
+    var el = document.getElementById('brandManageList');
+    el.innerHTML = '';
+    brands.forEach(function(b, i) {
+        var d = document.createElement('div');
+        d.className = 'brand-manage-item';
+        d.innerHTML =
+            '<div class="brand-manage-info"><div class="brand-manage-name">' + escapeHtml(b.name) + '</div>' +
+            '<div class="brand-manage-price">' + (b.price > 0 ? '单价 ¥' + b.price + '/件' : '未设置单价') + '</div></div>' +
+            '<div class="brand-manage-actions">' +
+                '<button class="btn-sm btn-orange" onclick="editPrice(\'' + b.name.replace(/'/g,"\\'") + '\')" style="font-size:12px;padding:6px 10px">单价</button>' +
+                '<button class="btn-sm btn-red" onclick="deleteBrand(' + i + ')">删除</button>' +
+            '</div>';
+        el.appendChild(d);
+    });
+}
+
+function editPrice(name) {
+    editingBrandName = name;
+    var b = null;
+    for (var i = 0; i < brands.length; i++) { if (brands[i].name === name) { b = brands[i]; break; } }
+    document.getElementById('priceModalBrand').textContent = '品牌：' + name;
+    document.getElementById('priceInput').value = b && b.price ? b.price : '';
+    showModal('priceModal');
+}
+function savePrice() {
+    var v = parseFloat(document.getElementById('priceInput').value);
+    var b = null;
+    for (var i = 0; i < brands.length; i++) { if (brands[i].name === editingBrandName) { b = brands[i]; break; } }
+    if (b) b.price = (v && v > 0) ? v : 0;
+    saveData(); hideModal('priceModal'); renderAll(); showToast('单价已保存');
+}
+
+function addNewBrand() {
+    var name = document.getElementById('newBrandInput').value.trim();
+    var price = parseFloat(document.getElementById('newBrandPrice').value);
+    if (!name) { showToast('请输入品牌名称','error'); return; }
+    var exists = false;
+    for (var i = 0; i < brands.length; i++) { if (brands[i].name === name) { exists = true; break; } }
+    if (exists) { showToast('品牌已存在','error'); return; }
+    brands.push({ name: name, price: (price && price > 0) ? price : 0 });
+    saveData();
+    hideModal('brandModal');
+    document.getElementById('newBrandInput').value = '';
+    document.getElementById('newBrandPrice').value = '';
+    renderAll(); showToast('品牌已添加');
+}
+
+function deleteBrand(i) {
+    if (!confirm('确定删除品牌“' + brands[i].name + '”？相关记录不会被删除。')) return;
+    brands.splice(i, 1);
+    saveData(); renderAll(); showToast('已删除');
+}
+
+function exportCSV() {
+    if (records.length === 0) { showToast('暂无数据可导出','error'); return; }
+    var csv = '日期,时段,模式,品牌,件数,单价,工时,备注,收入\n';
+    records.sort(function(a,b){return a.date.localeCompare(b.date);});
+    records.forEach(function(r) {
+        var isHour = r.mode === 'hour';
+        var pc = isHour ? 0 : getPrice(r.brand);
+        var inc = isHour ? 0 : pc * r.quantity;
+        var brandStr = isHour ? '' : '"'+r.brand.replace(/"/g,'""')+'"';
+        var noteStr = isHour ? '"'+(r.note||'').replace(/"/g,'""')+'"' : '';
+        csv += r.date + ',' + r.time + ',' + (isHour?'计时':'计件') + ',' +
+            brandStr + ',' +
+            (isHour ? '' : r.quantity) + ',' +
+            (isHour ? '' : (pc>0?pc:'')) + ',' +
+            (isHour ? (r.hours||'') : '') + ',' +
+            noteStr + ',' +
+            inc.toFixed(2) + '\n';
+    });
+    var blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '计件记账_' + today() + '.csv';
+    a.click();
+    showToast('CSV已导出');
+}
+
+function importData() { document.getElementById('fileInput').click(); }
+function handleImport(e) {
+    var f = e.target.files[0]; if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        try {
+            var d = JSON.parse(ev.target.result);
+            if (!confirm('导入将覆盖当前数据，确定？')) return;
+            records = migrateRecords(Array.isArray(d.records) ? d.records : []);
+            brands = migrateBrands(d.brands || []);
+            saveData(); renderAll(); showToast('导入成功');
+        } catch(err) { showToast('文件格式错误','error'); }
+    };
+    reader.readAsText(f); e.target.value = '';
+}
+
+function clearData() {
+    if (!confirm('确定清除所有数据？不可恢复！')) return;
+    if (!confirm('再次确认清除？')) return;
+    records = []; brands = [{name:'品牌A',price:0},{name:'品牌B',price:0},{name:'品牌C',price:0}];
+    localStorage.removeItem('pw_goal');
+    saveData(); renderAll(); showToast('已清除');
+}
+
+function showModal(id) { document.getElementById(id).classList.add('active'); }
+function hideModal(id) { document.getElementById(id).classList.remove('active'); }
+
+// 注意：initApp 会在密码验证成功后调用
