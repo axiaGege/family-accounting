@@ -309,7 +309,7 @@ async function renderHome() {
 }
 
 // ================================================================
-//  统计页（彻底移除滚动干预）
+//  统计页
 // ================================================================
 let currentStatPeriod = 'week';
 
@@ -670,7 +670,7 @@ nextDayBtn.addEventListener('click', () => {
 });
 
 // ================================================================
-//  导航切换（延迟重置滚动）
+//  导航切换（只在首页重置滚动，统计页保持用户滚动位置）
 // ================================================================
 document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
   btn.addEventListener('click', function() {
@@ -679,10 +679,13 @@ document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
     document.getElementById('page-' + page).classList.add('active');
     document.querySelectorAll('.nav-item[data-page]').forEach(b => b.classList.remove('active'));
     this.classList.add('active');
-    // 延迟重置滚动，避免与渲染冲突
-    setTimeout(() => {
+    
+    // 只有切换到「首页」时才重置滚动到顶部
+    if (page === 'home') {
       document.getElementById('mainContent').scrollTop = 0;
-    }, 100);
+    }
+    // 切换到「统计」时，保留用户当前的滚动位置
+    
     if (page === 'stats') renderStats();
     if (page === 'home') renderHome();
   });
@@ -697,7 +700,6 @@ statPeriodBtns.forEach(btn => {
     this.classList.add('active');
     currentStatPeriod = this.dataset.period;
     renderStats();
-    // 切换周期后不要额外干预滚动
   });
 });
 
