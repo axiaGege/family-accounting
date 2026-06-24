@@ -1,39 +1,61 @@
-// ===== 密码验证 =====
+// ===== 密码验证（SHA-256 哈希 + 记住登录） =====
 (function() {
     var loginModal = document.getElementById('loginModal');
     var loginInput = document.getElementById('loginPassword');
     var loginError = document.getElementById('loginError');
-    var correctPassword = '520118';
+    var PASSWORD_HASH = '90f1f3e6a1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c5d';
 
-    window.checkPassword = function() {
+    if (localStorage.getItem('pw_logged_in') === 'true') {
+        loginModal.classList.remove('active');
+        if (typeof initApp === 'function') { initApp(); }
+        return;
+    }
+
+    loginModal.classList.add('active');
+
+    async function sha256(message) {
+        var encoder = new TextEncoder();
+        var data = encoder.encode(message);
+        var hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        var hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+    }
+
+    window.checkPassword = async function() {
         var input = loginInput.value.trim();
-        if (input === correctPassword) {
+        if (!input) {
+            loginError.style.display = 'block';
+            loginError.textContent = '请输入密码';
+            loginInput.focus();
+            setTimeout(function() { loginError.style.display = 'none'; }, 2000);
+            return;
+        }
+        var inputHash = await sha256(input);
+        if (inputHash === PASSWORD_HASH) {
+            localStorage.setItem('pw_logged_in', 'true');
             loginModal.classList.remove('active');
-            // 解锁后初始化应用
-            initApp();
+            if (typeof initApp === 'function') { initApp(); }
         } else {
             loginError.style.display = 'block';
+            loginError.textContent = '密码错误，请重试';
             loginInput.value = '';
             loginInput.focus();
             setTimeout(function() { loginError.style.display = 'none'; }, 2000);
         }
     };
 
-    // 回车键触发登录
     loginInput.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
             e.preventDefault();
             checkPassword();
         }
     });
-
-    // 初始锁定页面，禁止用户点击
-    loginModal.classList.add('active');
-    // 但需要先加载数据，以便登录后直接使用
-    // 数据加载将在 initApp 中执行
+    var loginBtn = document.querySelector('#loginModal .btn-primary');
+    if (loginBtn) { loginBtn.onclick = function() { checkPassword(); }; }
+    setTimeout(function() { loginInput.focus(); }, 300);
 })();
 
-// ===== 应用核心代码（原有逻辑，只是用函数包裹） =====
+// ===== 应用核心代码 =====
 var records = [];
 var brands = [];
 var currentMode = 'piece';
@@ -58,6 +80,7 @@ function migrateRecords(raw) {
     if (!Array.isArray(raw)) return [];
     return raw.map(function(r) {
         if (r && !r.mode) r.mode = 'piece';
+        if (r.mode === 'rest' && !r.hours) r.hours = 4;
         return r;
     });
 }
@@ -95,9 +118,7 @@ function getBrandObj(name) {
     return obj;
 }
 
-function today() {
-    return new Date().toISOString().split('T')[0];
-}
+function today() { return new Date().toISOString().split('T')[0]; }
 
 function getMonday(d) {
     var day = d.getDay();
@@ -108,13 +129,9 @@ function getMonday(d) {
     return mon;
 }
 
-function formatDate(d) {
-    return d.toISOString().split('T')[0];
-}
+function formatDate(d) { return d.toISOString().split('T')[0]; }
 
-function weekdayName(i) {
-    return ['一','二','三','四','五','六','日'][i];
-}
+function weekdayName(i) { return ['一','二','三','四','五','六','日'][i]; }
 
 function escapeHtml(s) {
     var d = document.createElement('div');
@@ -129,13 +146,20 @@ function showToast(msg, type) {
     setTimeout(function() { t.className = 'toast'; }, 2200);
 }
 
+// ===== 模式切换（升级版，支持休息） =====
 function switchMode(mode) {
     currentMode = mode;
     document.getElementById('modePieceBtn').classList.toggle('active', mode === 'piece');
     document.getElementById('modeHourBtn').classList.toggle('active', mode === 'hour');
+    document.getElementById('modeRestBtn').classList.toggle('active', mode === 'rest');
     document.getElementById('pieceFields').classList.toggle('hidden', mode !== 'piece');
     document.getElementById('hourFields').classList.toggle('hidden', mode !== 'hour');
+    document.getElementById('restFields').classList.toggle('hidden', mode !== 'rest');
 }
+
+window.setRestHours = function(h) {
+    document.getElementById('restHoursInput').value = h;
+};
 
 function initApp() {
     loadData();
@@ -145,7 +169,6 @@ function initApp() {
     var dateInput = document.getElementById('recordDateInput');
     if (dateInput) dateInput.value = today();
     renderAll();
-    // 绑定事件（因为有些事件在HTML中已绑定，额外绑定一些动态事件）
     document.addEventListener('click', function(e) {
         if (e.target.classList.contains('time-pill') && !e.target.closest('#editTimePills')) {
             var pills = document.querySelectorAll('.time-pills:not(#editTimePills) .time-pill');
@@ -197,11 +220,12 @@ function switchPage(page, btn) {
     if (page === 'settings') renderBrandManageList();
 }
 
+// ===== 品牌芯片 =====
 function renderBrandChips() {
     var c = document.getElementById('brandChips');
     c.innerHTML = '';
     var freq = {};
-    records.forEach(function(r) { if (r.mode !== 'hour') freq[r.brand] = (freq[r.brand]||0) + r.quantity; });
+    records.forEach(function(r) { if (r.mode !== 'hour' && r.mode !== 'rest') freq[r.brand] = (freq[r.brand]||0) + r.quantity; });
     var sorted = brands.slice();
     sorted.sort(function(a,b) { return (freq[b.name]||0) - (freq[a.name]||0); });
     sorted.forEach(function(b) {
@@ -218,7 +242,7 @@ function renderBrandChips() {
     });
 }
 
-function addRecord() {
+window.addRecord = function() {
     if (addBtnLocked) return;
     var dateVal = document.getElementById('recordDateInput').value;
     if (!dateVal) { showToast('请选择日期','error'); return; }
@@ -233,27 +257,33 @@ function addRecord() {
         getBrandObj(brand);
         records.push({ id:Date.now(), date:dateVal, time:selectedTime, brand:brand, quantity:qty, mode:'piece', edited:false });
         showToast('计件记录已添加');
-    } else {
+        document.getElementById('qtyInput').value = '';
+        document.getElementById('brandInput').value = '';
+    } else if (currentMode === 'hour') {
         var hoursRaw = document.getElementById('hoursInput').value;
         var note = document.getElementById('hourNoteInput').value.trim();
         var hours = parseFloat(hoursRaw);
         if (!hoursRaw || hours <= 0 || hours > 24) { showToast('请输入有效工时','error'); return; }
         records.push({ id:Date.now(), date:dateVal, time:selectedTime, mode:'hour', hours:hours, note:note, edited:false });
         showToast('计时记录已添加（' + hours + 'h）');
+        document.getElementById('hoursInput').value = '';
+        document.getElementById('hourNoteInput').value = '';
+    } else if (currentMode === 'rest') {
+        var restHoursRaw = document.getElementById('restHoursInput').value;
+        var restNote = document.getElementById('restNoteInput').value.trim();
+        var restHours = parseFloat(restHoursRaw);
+        if (!restHoursRaw || restHours <= 0 || restHours > 24) { showToast('请输入有效休息时长','error'); return; }
+        records.push({ id:Date.now(), date:dateVal, time:selectedTime, mode:'rest', hours:restHours, note:restNote, edited:false });
+        showToast('休息记录已添加（' + restHours + 'h）');
+        document.getElementById('restHoursInput').value = '';
+        document.getElementById('restNoteInput').value = '';
     }
 
     saveData();
-    if (currentMode === 'piece') {
-        document.getElementById('qtyInput').value = '';
-        document.getElementById('brandInput').value = '';
-    } else {
-        document.getElementById('hoursInput').value = '';
-        document.getElementById('hourNoteInput').value = '';
-    }
     addBtnLocked = true;
     setTimeout(function() { addBtnLocked = false; }, 500);
     renderAll();
-}
+};
 
 function renderTodayRecords() {
     var dateVal = document.getElementById('recordDateInput').value || today();
@@ -274,10 +304,14 @@ function renderTodayRecords() {
     el.innerHTML = '';
     list.forEach(function(r) {
         var isHour = r.mode === 'hour';
+        var isRest = r.mode === 'rest';
         var qtyText = '', brandText = '', incomeText = '';
-        if (isHour) {
+        if (isRest) {
             qtyText = r.hours + 'h';
-            brandText = '计时' + (r.note ? ' · ' + r.note : '');
+            brandText = '🛌 休息' + (r.note ? ' · ' + r.note : '');
+        } else if (isHour) {
+            qtyText = r.hours + 'h';
+            brandText = '⏱️ 计时' + (r.note ? ' · ' + r.note : '');
         } else {
             var income = getPrice(r.brand) * r.quantity;
             qtyText = r.quantity + '件';
@@ -292,10 +326,10 @@ function renderTodayRecords() {
             '<div class="record-center">' +
                 '<div class="record-brand-name">' + escapeHtml(brandText) + '</div>' +
                 '<div class="record-time-text">' + r.date + (r.edited ? ' *' : '') + '</div>' +
-                '<span class="record-mode-tag ' + (isHour ? 'hour' : 'piece') + '">' + (isHour ? '计时' : '计件') + '</span>' +
+                '<span class="record-mode-tag ' + (isRest ? 'hour' : (isHour ? 'hour' : 'piece')) + '">' + (isRest ? '休息' : (isHour ? '计时' : '计件')) + '</span>' +
             '</div>' +
             '<div class="record-qty-area">' +
-                '<div class="record-qty">' + qtyText + '</div>' +
+                '<div class="record-qty" style="' + (isRest ? 'color:#D97706;' : '') + '">' + qtyText + '</div>' +
                 (incomeText ? '<div class="record-income">' + incomeText + '</div>' : '') +
             '</div>' +
             '<div class="record-actions">' +
@@ -319,19 +353,24 @@ function editRecord(id) {
     if (!r) return;
     editingId = id;
     var isHour = r.mode === 'hour';
-    document.getElementById('editModeLabel').textContent = isHour ? '计时模式' : '计件模式';
+    var isRest = r.mode === 'rest';
+    var modeLabel = isRest ? '休息模式' : (isHour ? '计时模式' : '计件模式');
+    document.getElementById('editModeLabel').textContent = modeLabel;
 
     var pills = document.querySelectorAll('#editTimePills .time-pill');
     for (var i = 0; i < pills.length; i++) {
         pills[i].classList.toggle('active', pills[i].getAttribute('data-time') === r.time);
     }
 
-    document.getElementById('editPieceField').classList.toggle('hidden', isHour);
-    document.getElementById('editQtyField').classList.toggle('hidden', isHour);
-    document.getElementById('editHoursField').classList.toggle('hidden', !isHour);
-    document.getElementById('editNoteField').classList.toggle('hidden', !isHour);
+    document.getElementById('editPieceField').classList.toggle('hidden', isHour || isRest);
+    document.getElementById('editQtyField').classList.toggle('hidden', isHour || isRest);
+    document.getElementById('editHoursField').classList.toggle('hidden', !(isHour || isRest));
+    document.getElementById('editNoteField').classList.toggle('hidden', !(isHour || isRest));
 
-    if (isHour) {
+    var hoursLabel = document.querySelector('#editHoursField .modal-field-label');
+    if (hoursLabel) hoursLabel.textContent = isRest ? '休息时长（小时）' : '工时（小时）';
+
+    if (isHour || isRest) {
         document.getElementById('editHours').value = r.hours || '';
         document.getElementById('editNote').value = r.note || '';
     } else {
@@ -346,15 +385,16 @@ function saveEdit() {
     for (var i = 0; i < records.length; i++) { if (records[i].id === editingId) { r = records[i]; break; } }
     if (!r) return;
     var isHour = r.mode === 'hour';
+    var isRest = r.mode === 'rest';
     var activePill = document.querySelector('#editTimePills .time-pill.active');
     var newTime = activePill ? activePill.getAttribute('data-time') : r.time;
 
-    if (isHour) {
+    if (isHour || isRest) {
         var hours = parseFloat(document.getElementById('editHours').value);
         var note = document.getElementById('editNote').value.trim();
-        if (!hours || hours <= 0) { showToast('请输入有效工时','error'); return; }
+        if (!hours || hours <= 0) { showToast('请输入有效时长','error'); return; }
         r.hours = hours; r.note = note;
-        delete r.hourlyRate;
+        if (isRest) { delete r.hourlyRate; }
     } else {
         var brand = document.getElementById('editBrand').value.trim();
         var qty = parseInt(document.getElementById('editQty').value);
@@ -374,32 +414,38 @@ function updateHomeStats() {
     var todayRecords = records.filter(function(r) { return r.date === todayStr; });
     var monthRecords = records.filter(function(r) { return r.date.indexOf(ym) === 0; });
 
-    var pieceToday = todayRecords.filter(function(r) { return r.mode !== 'hour'; });
+    var pieceToday = todayRecords.filter(function(r) { return r.mode === 'piece'; });
     var hourToday = todayRecords.filter(function(r) { return r.mode === 'hour'; });
-    var pieceMonth = monthRecords.filter(function(r) { return r.mode !== 'hour'; });
+    var restToday = todayRecords.filter(function(r) { return r.mode === 'rest'; });
+    var pieceMonth = monthRecords.filter(function(r) { return r.mode === 'piece'; });
     var hourMonth = monthRecords.filter(function(r) { return r.mode === 'hour'; });
+    var restMonth = monthRecords.filter(function(r) { return r.mode === 'rest'; });
 
     var todayPieceQty = 0;
     pieceToday.forEach(function(r) { todayPieceQty += r.quantity; });
     var todayHours = 0;
     hourToday.forEach(function(r) { todayHours += (r.hours || 0); });
-
+    var todayRest = 0;
+    restToday.forEach(function(r) { todayRest += (r.hours || 0); });
     var todayPieceInc = 0;
     pieceToday.forEach(function(r) { todayPieceInc += getPrice(r.brand) * r.quantity; });
-    var todayIncome = todayPieceInc;
 
     var monthPieceQty = 0;
     pieceMonth.forEach(function(r) { monthPieceQty += r.quantity; });
     var monthHours = 0;
     hourMonth.forEach(function(r) { monthHours += (r.hours || 0); });
+    var monthRest = 0;
+    restMonth.forEach(function(r) { monthRest += (r.hours || 0); });
     var monthPieceInc = 0;
     pieceMonth.forEach(function(r) { monthPieceInc += getPrice(r.brand) * r.quantity; });
     var monthIncome = monthPieceInc;
 
     document.getElementById('headerPieceQty').textContent = todayPieceQty + '件';
     document.getElementById('headerPieceSub').textContent = todayPieceInc > 0 ? '¥' + todayPieceInc.toFixed(0) : '';
-    document.getElementById('headerHours').textContent = todayHours.toFixed(1) + 'h';
-    document.getElementById('headerHourSub').textContent = hourToday.length > 0 ? hourToday.length + '次计时' : '';
+    var headerHourText = todayHours.toFixed(1) + 'h';
+    if (todayRest > 0) headerHourText += ' (休' + todayRest.toFixed(1) + 'h)';
+    document.getElementById('headerHours').textContent = headerHourText;
+    document.getElementById('headerHourSub').textContent = (hourToday.length > 0 ? hourToday.length + '次计时' : '') + (restToday.length > 0 ? ' · 休' + restToday.length + '次' : '');
 
     var m = 0, n = 0, e = 0;
     pieceToday.forEach(function(r) { if(r.time==='早') m+=r.quantity; if(r.time==='中') n+=r.quantity; if(r.time==='晚') e+=r.quantity; });
@@ -408,17 +454,17 @@ function updateHomeStats() {
     document.getElementById('todayEvening').textContent = e;
 
     document.getElementById('monthIncome').textContent = '¥' + monthIncome.toFixed(1);
-    document.getElementById('monthIncomeSub').textContent = '计件' + monthPieceQty + '件 · 计时' + monthHours.toFixed(1) + 'h';
+    var monthSub = '计件' + monthPieceQty + '件 · 计时' + monthHours.toFixed(1) + 'h';
+    if (monthRest > 0) monthSub += ' · 休' + monthRest.toFixed(1) + 'h';
+    document.getElementById('monthIncomeSub').textContent = monthSub;
 
     var lastMonth = new Date(); lastMonth.setMonth(lastMonth.getMonth()-1);
     var lastYM = lastMonth.toISOString().slice(0,7);
     var lastRec = records.filter(function(r) { return r.date.indexOf(lastYM) === 0; });
     var lastPieceQty = 0;
-    lastRec.filter(function(r){return r.mode!=='hour';}).forEach(function(r){ lastPieceQty += r.quantity; });
+    lastRec.filter(function(r){return r.mode==='piece';}).forEach(function(r){ lastPieceQty += r.quantity; });
     var lastInc = 0;
-    lastRec.forEach(function(r) {
-        if (r.mode!=='hour') lastInc += getPrice(r.brand)*r.quantity;
-    });
+    lastRec.filter(function(r){return r.mode==='piece';}).forEach(function(r){ lastInc += getPrice(r.brand)*r.quantity; });
     var qtyCmp = lastPieceQty>0 ? Math.round((monthPieceQty-lastPieceQty)/lastPieceQty*100) : null;
     var incCmp = lastInc>0 ? Math.round((monthIncome-lastInc)/lastInc*100) : null;
     var qtyEl = document.getElementById('cmpQty');
@@ -433,18 +479,23 @@ function updateHomeStats() {
 
 function updateDateStats(dateStr) {
     var dateRecords = records.filter(function(r) { return r.date === dateStr; });
-    var pieceR = dateRecords.filter(function(r) { return r.mode !== 'hour'; });
+    var pieceR = dateRecords.filter(function(r) { return r.mode === 'piece'; });
     var hourR = dateRecords.filter(function(r) { return r.mode === 'hour'; });
+    var restR = dateRecords.filter(function(r) { return r.mode === 'rest'; });
     var totalQty = 0;
     pieceR.forEach(function(r) { totalQty += r.quantity; });
     var totalInc = 0;
     pieceR.forEach(function(r) { totalInc += getPrice(r.brand) * r.quantity; });
     var totalHours = 0;
     hourR.forEach(function(r) { totalHours += (r.hours || 0); });
+    var totalRest = 0;
+    restR.forEach(function(r) { totalRest += (r.hours || 0); });
     document.getElementById('headerPieceQty').textContent = totalQty + '件';
     document.getElementById('headerPieceSub').textContent = totalInc > 0 ? '¥' + totalInc.toFixed(0) : '';
-    document.getElementById('headerHours').textContent = totalHours.toFixed(1) + 'h';
-    document.getElementById('headerHourSub').textContent = hourR.length > 0 ? hourR.length + '次' : '';
+    var hourText = totalHours.toFixed(1) + 'h';
+    if (totalRest > 0) hourText += ' (休' + totalRest.toFixed(1) + 'h)';
+    document.getElementById('headerHours').textContent = hourText;
+    document.getElementById('headerHourSub').textContent = (hourR.length > 0 ? hourR.length + '次' : '') + (restR.length > 0 ? ' · 休' + restR.length + '次' : '');
     var m = 0, n = 0, e = 0;
     pieceR.forEach(function(r) { if(r.time==='早') m+=r.quantity; if(r.time==='中') n+=r.quantity; if(r.time==='晚') e+=r.quantity; });
     document.getElementById('todayMorning').textContent = m;
@@ -491,14 +542,21 @@ function renderMonthStats() {
     var dayList = Object.keys(days).sort();
     var workDays = dayList.length;
 
-    var pieceR = mr.filter(function(r) { return r.mode !== 'hour'; });
+    var pieceR = mr.filter(function(r) { return r.mode === 'piece'; });
     var hourR = mr.filter(function(r) { return r.mode === 'hour'; });
+    var restR = mr.filter(function(r) { return r.mode === 'rest'; });
     var totalQty = 0;
     pieceR.forEach(function(r) { totalQty += r.quantity; });
     var pieceInc = 0;
     pieceR.forEach(function(r) { pieceInc += getPrice(r.brand) * r.quantity; });
     var totalHours = 0;
     hourR.forEach(function(r) { totalHours += (r.hours || 0); });
+    var totalRest = 0;
+    restR.forEach(function(r) { totalRest += (r.hours || 0); });
+    var restDays = 0;
+    var restDates = {};
+    restR.forEach(function(r) { restDates[r.date] = true; });
+    restDays = Object.keys(restDates).length;
 
     var daySums = {};
     pieceR.forEach(function(r) { daySums[r.date] = (daySums[r.date]||0) + r.quantity; });
@@ -523,7 +581,9 @@ function renderMonthStats() {
         pieceR.filter(function(r){return r.date===key;}).forEach(function(r){qty+=r.quantity;});
         var hrs = 0;
         hourR.filter(function(r){return r.date===key;}).forEach(function(r){hrs+=(r.hours||0);});
-        last7.push({ date:key, label:(d2.getMonth()+1)+'/'+d2.getDate(), qty:qty, hours:hrs });
+        var rest = 0;
+        restR.filter(function(r){return r.date===key;}).forEach(function(r){rest+=(r.hours||0);});
+        last7.push({ date:key, label:(d2.getMonth()+1)+'/'+d2.getDate(), qty:qty, hours:hrs, rest:rest });
     }
     var max7 = 1;
     last7.forEach(function(x) { if(x.qty>max7) max7=x.qty; });
@@ -537,13 +597,20 @@ function renderMonthStats() {
         '<div class="ov-card orange"><div class="ov-label">工作天数</div><div class="ov-value">' + workDays + '</div><div class="ov-sub">最高' + maxDay + ' · 最低' + minDay + '</div></div>' +
         '</div>';
 
+    if (totalRest > 0) {
+        html += '<div class="overview-grid" style="grid-template-columns:1fr 1fr;">' +
+            '<div class="ov-card" style="background:linear-gradient(135deg,#FEF3C7,#FDE68A);color:#92400E;"><div class="ov-label">🛌 本月休息总时长</div><div class="ov-value">' + totalRest.toFixed(1) + 'h</div><div class="ov-sub">' + restR.length + '条记录</div></div>' +
+            '<div class="ov-card" style="background:linear-gradient(135deg,#FCE7F3,#F9A8D4);color:#9D174D;"><div class="ov-label">📅 休息天数</div><div class="ov-value">' + restDays + '天</div><div class="ov-sub">' + (workDays>0?Math.round(totalRest/workDays*10)/10:0) + 'h/工作日</div></div>' +
+            '</div>';
+    }
+
     html += '<div class="sec-title">最近7天</div><div class="chart-card">';
     last7.forEach(function(x) {
         var pct = Math.round(x.qty / max7 * 100);
         if (pct < 3) pct = 3;
         var isToday = x.date === today();
-        var hourLabel = x.hours > 0 ? ' <span style="font-size:10px;color:var(--orange)">+' + x.hours.toFixed(1) + 'h</span>' : '';
-        html += '<div class="bar-row"><div class="bar-label">' + x.label + '</div><div class="bar-track"><div class="bar-fill' + (isToday?' today':'') + '" style="width:' + pct + '%"></div></div><div class="bar-val">' + x.qty + '件' + hourLabel + '</div></div>';
+        var restLabel = x.rest > 0 ? ' <span style="font-size:10px;color:#D97706;">休' + x.rest.toFixed(1) + 'h</span>' : '';
+        html += '<div class="bar-row"><div class="bar-label">' + x.label + '</div><div class="bar-track"><div class="bar-fill' + (isToday?' today':'') + '" style="width:' + pct + '%"></div></div><div class="bar-val">' + x.qty + '件' + restLabel + '</div></div>';
     });
     html += '</div>';
 
@@ -564,22 +631,35 @@ function renderMonthStats() {
         });
     }
 
-    if (hourR.length > 0) {
-        html += '<div class="sec-title">本月计时记录</div><div class="card" style="margin-bottom:18px">';
-        html += '<div style="padding:14px"><div style="font-size:13px;color:var(--gray-400);margin-bottom:6px">计时总工时</div><div style="font-size:24px;font-weight:800;color:var(--cyan)">' + totalHours.toFixed(1) + 'h</div><div style="font-size:12px;color:var(--gray-400);margin-top:4px">' + hourR.length + '次记录</div></div>';
-        var hourByDate = {};
-        hourR.forEach(function(r) {
-            if (!hourByDate[r.date]) hourByDate[r.date] = [];
-            hourByDate[r.date].push(r);
+    var timeRecords = hourR.concat(restR);
+    if (timeRecords.length > 0) {
+        html += '<div class="sec-title">本月计时 & 休息记录</div><div class="card" style="margin-bottom:18px">';
+        var totalTime = 0;
+        hourR.forEach(function(r) { totalTime += (r.hours||0); });
+        var totalRest2 = 0;
+        restR.forEach(function(r) { totalRest2 += (r.hours||0); });
+        html += '<div style="padding:14px"><div style="font-size:13px;color:var(--gray-400);margin-bottom:6px">计时总工时 / 休息总时长</div><div style="font-size:24px;font-weight:800;color:var(--cyan)">' + totalTime.toFixed(1) + 'h</div><div style="font-size:18px;font-weight:700;color:#D97706;">休 ' + totalRest2.toFixed(1) + 'h</div><div style="font-size:12px;color:var(--gray-400);margin-top:4px">' + timeRecords.length + '条记录</div></div>';
+        var timeByDate = {};
+        timeRecords.forEach(function(r) {
+            if (!timeByDate[r.date]) timeByDate[r.date] = [];
+            timeByDate[r.date].push(r);
         });
-        Object.keys(hourByDate).sort().forEach(function(date) {
-            var list = hourByDate[date];
-            var sum = 0;
-            list.forEach(function(r) { sum += (r.hours||0); });
+        Object.keys(timeByDate).sort().forEach(function(date) {
+            var list = timeByDate[date];
+            var sumTime = 0, sumRest = 0;
+            var notes = [];
+            list.forEach(function(r) {
+                if (r.mode === 'hour') { sumTime += (r.hours||0); }
+                else { sumRest += (r.hours||0); }
+                if (r.note) notes.push(r.note);
+            });
             var times = list.map(function(r){return r.time;}).join('、');
+            var label = '';
+            if (sumTime > 0) label += sumTime.toFixed(1) + 'h';
+            if (sumRest > 0) label += (label ? ' + ' : '') + '🛌' + sumRest.toFixed(1) + 'h';
             html += '<div class="time-stat-row">' +
-                '<div><div class="time-stat-date">' + date.slice(5) + '</div><div class="time-stat-detail">' + list.length + '次 · ' + times + '</div></div>' +
-                '<div class="time-stat-val">' + sum.toFixed(1) + 'h</div></div>';
+                '<div><div class="time-stat-date">' + date.slice(5) + '</div><div class="time-stat-detail">' + list.length + '次 · ' + times + (notes.length>0?' · '+notes.join(';') : '') + '</div></div>' +
+                '<div class="time-stat-val">' + label + '</div></div>';
         });
         html += '</div>';
     }
@@ -590,14 +670,17 @@ function renderMonthStats() {
     } else {
         dayList.reverse().forEach(function(date) {
             var dr = mr.filter(function(r) { return r.date === date; });
-            var pi = dr.filter(function(r) { return r.mode !== 'hour'; });
+            var pi = dr.filter(function(r) { return r.mode === 'piece'; });
             var hi = dr.filter(function(r) { return r.mode === 'hour'; });
+            var ri = dr.filter(function(r) { return r.mode === 'rest'; });
             var dt = 0;
             pi.forEach(function(r) { dt += r.quantity; });
             var di = 0;
             pi.forEach(function(r) { di += getPrice(r.brand)*r.quantity; });
             var dh = 0;
             hi.forEach(function(r) { dh += (r.hours||0); });
+            var dr2 = 0;
+            ri.forEach(function(r) { dr2 += (r.hours||0); });
             var bb = {};
             pi.forEach(function(r) { bb[r.brand] = (bb[r.brand]||0) + r.quantity; });
             var tb = {'早':0,'中':0,'晚':0};
@@ -612,10 +695,14 @@ function renderMonthStats() {
                 rows += '<div class="day-brand-row"><span class="day-brand-row-name">' + escapeHtml(b) + '</span><span class="day-brand-row-right"><span class="day-brand-row-qty">' + q + '件</span><span class="day-brand-row-income"> ¥' + bi.toFixed(1) + '</span></span></div>';
             });
             hi.forEach(function(r) {
-                rows += '<div class="day-brand-row"><span class="day-brand-row-name">计时' + (r.note?' · '+escapeHtml(r.note):'') + '</span><span class="day-brand-row-right"><span class="day-brand-row-qty" style="color:var(--cyan)">' + r.hours + 'h</span></span></div>';
+                rows += '<div class="day-brand-row"><span class="day-brand-row-name">⏱️ 计时' + (r.note?' · '+escapeHtml(r.note):'') + '</span><span class="day-brand-row-right"><span class="day-brand-row-qty" style="color:var(--cyan)">' + r.hours + 'h</span></span></div>';
+            });
+            ri.forEach(function(r) {
+                rows += '<div class="day-brand-row"><span class="day-brand-row-name">🛌 休息' + (r.note?' · '+escapeHtml(r.note):'') + '</span><span class="day-brand-row-right"><span class="day-brand-row-qty" style="color:#D97706;">' + r.hours + 'h</span></span></div>';
             });
             var totalLabel = dt + '件';
             if (dh > 0) totalLabel += ' + ' + dh.toFixed(1) + 'h';
+            if (dr2 > 0) totalLabel += ' 🛌' + dr2.toFixed(1) + 'h';
             html += '<div class="day-card">' +
                 '<div class="day-card-head"><div><div class="day-card-date">' + date.slice(5) + '<span class="day-card-week"> 周' + wd + (isT?' · 今天':'') + '</span></div><div class="day-card-income">收入 ¥' + di.toFixed(1) + '</div></div>' +
                 '<div class="day-card-total">' + totalLabel + '</div></div>' +
@@ -640,14 +727,17 @@ function renderWeekStats() {
     var wd = [];
     for (var i = 0; i < 7; i++) { var d2 = new Date(currentWeekStart); d2.setDate(d2.getDate() + i); wd.push(formatDate(d2)); }
     var wr = records.filter(function(r) { return wd.indexOf(r.date) >= 0; });
-    var pieceW = wr.filter(function(r) { return r.mode !== 'hour'; });
+    var pieceW = wr.filter(function(r) { return r.mode === 'piece'; });
     var hourW = wr.filter(function(r) { return r.mode === 'hour'; });
+    var restW = wr.filter(function(r) { return r.mode === 'rest'; });
     var totalQty = 0;
     pieceW.forEach(function(r) { totalQty += r.quantity; });
     var totalInc = 0;
     pieceW.forEach(function(r) { totalInc += getPrice(r.brand) * r.quantity; });
     var totalHours = 0;
     hourW.forEach(function(r) { totalHours += (r.hours||0); });
+    var totalRest = 0;
+    restW.forEach(function(r) { totalRest += (r.hours||0); });
     var maxQty = 0;
     wd.forEach(function(d) {
         var q = 0;
@@ -659,14 +749,23 @@ function renderWeekStats() {
     var workDays = {};
     wr.forEach(function(r) { workDays[r.date] = true; });
     var workDaysCount = Object.keys(workDays).length;
+    var restDays = {};
+    restW.forEach(function(r) { restDays[r.date] = true; });
+    var restDaysCount = Object.keys(restDays).length;
 
     var html = '';
     html += '<div class="overview-grid">' +
         '<div class="ov-card gradient"><div class="ov-label">本周计件</div><div class="ov-value">' + totalQty + '件</div><div class="ov-sub">' + pieceW.length + '条计件</div></div>' +
         '<div class="ov-card green"><div class="ov-label">本周收入</div><div class="ov-value">¥' + totalInc.toFixed(1) + '</div><div class="ov-sub">日均' + (workDaysCount>0?Math.round(totalQty/workDaysCount):0) + '件</div></div>' +
         '<div class="ov-card cyan"><div class="ov-label">本周计时</div><div class="ov-value">' + totalHours.toFixed(1) + 'h</div><div class="ov-sub">' + hourW.length + '次计时</div></div>' +
-        '<div class="ov-card orange"><div class="ov-label">工作天数</div><div class="ov-value">' + workDaysCount + '</div><div class="ov-sub">共7天</div></div>' +
+        '<div class="ov-card orange"><div class="ov-label">工作天数</div><div class="ov-value">' + workDaysCount + '</div><div class="ov-sub">共7天 · 休' + restDaysCount + '天</div></div>' +
         '</div>';
+
+    if (totalRest > 0) {
+        html += '<div class="overview-grid" style="grid-template-columns:1fr 1fr;margin-bottom:12px;">' +
+            '<div class="ov-card" style="background:linear-gradient(135deg,#FEF3C7,#FDE68A);color:#92400E;"><div class="ov-label">🛌 本周休息总时长</div><div class="ov-value">' + totalRest.toFixed(1) + 'h</div><div class="ov-sub">' + restW.length + '条记录</div></div>' +
+            '</div>';
+    }
 
     html += '<div class="sec-title">本周每日</div><div class="chart-card"><div class="week-chart">';
     var todayStr = today();
@@ -675,10 +774,12 @@ function renderWeekStats() {
         pieceW.filter(function(r){return r.date===d;}).forEach(function(r){qty+=r.quantity;});
         var hrs = 0;
         hourW.filter(function(r){return r.date===d;}).forEach(function(r){hrs+=(r.hours||0);});
+        var rest = 0;
+        restW.filter(function(r){return r.date===d;}).forEach(function(r){rest+=(r.hours||0);});
         var h = Math.round(qty / maxQty * 90) + 8;
         var isT = d === todayStr;
-        var hourLabel = hrs > 0 ? '<br><span style="color:var(--cyan)">' + hrs.toFixed(1) + 'h</span>' : '';
-        html += '<div class="week-bar-col"><div class="week-bar-val">' + (qty>0?qty:'') + hourLabel + '</div><div class="week-bar' + (isT?' today':'') + '" style="height:' + h + 'px"></div><div class="week-bar-label">周' + weekdayName(new Date(d).getDay()-1) + '</div></div>';
+        var restLabel = rest > 0 ? '<br><span style="color:#D97706;font-size:10px;">休' + rest.toFixed(1) + 'h</span>' : '';
+        html += '<div class="week-bar-col"><div class="week-bar-val">' + (qty>0?qty:'') + restLabel + '</div><div class="week-bar' + (isT?' today':'') + '" style="height:' + h + 'px"></div><div class="week-bar-label">周' + weekdayName(new Date(d).getDay()-1) + '</div></div>';
     });
     html += '</div></div>';
 
@@ -695,22 +796,33 @@ function renderWeekStats() {
         });
     }
 
-    if (hourW.length > 0) {
-        html += '<div class="sec-title">本周计时记录</div><div class="card" style="margin-bottom:18px">';
-        html += '<div style="padding:14px"><div style="font-size:13px;color:var(--gray-400);margin-bottom:6px">计时总工时</div><div style="font-size:24px;font-weight:800;color:var(--cyan)">' + totalHours.toFixed(1) + 'h</div><div style="font-size:12px;color:var(--gray-400);margin-top:4px">' + hourW.length + '次记录</div></div>';
+    var timeRecords = hourW.concat(restW);
+    if (timeRecords.length > 0) {
+        html += '<div class="sec-title">本周计时 & 休息记录</div><div class="card" style="margin-bottom:18px">';
+        var totalTime2 = 0;
+        hourW.forEach(function(r) { totalTime2 += (r.hours||0); });
+        var totalRest2 = 0;
+        restW.forEach(function(r) { totalRest2 += (r.hours||0); });
+        html += '<div style="padding:14px"><div style="font-size:13px;color:var(--gray-400);margin-bottom:6px">计时总工时 / 休息总时长</div><div style="font-size:24px;font-weight:800;color:var(--cyan)">' + totalTime2.toFixed(1) + 'h</div><div style="font-size:18px;font-weight:700;color:#D97706;">休 ' + totalRest2.toFixed(1) + 'h</div><div style="font-size:12px;color:var(--gray-400);margin-top:4px">' + timeRecords.length + '条记录</div></div>';
         var hByDate = {};
-        hourW.forEach(function(r) {
+        timeRecords.forEach(function(r) {
             if (!hByDate[r.date]) hByDate[r.date] = [];
             hByDate[r.date].push(r);
         });
         Object.keys(hByDate).sort().forEach(function(date) {
             var list = hByDate[date];
-            var sum = 0;
-            list.forEach(function(r) { sum += (r.hours||0); });
+            var sumTime = 0, sumRest = 0;
+            list.forEach(function(r) {
+                if (r.mode === 'hour') { sumTime += (r.hours||0); }
+                else { sumRest += (r.hours||0); }
+            });
             var times = list.map(function(r){return r.time;}).join('、');
+            var label = '';
+            if (sumTime > 0) label += sumTime.toFixed(1) + 'h';
+            if (sumRest > 0) label += (label ? ' + ' : '') + '🛌' + sumRest.toFixed(1) + 'h';
             html += '<div class="time-stat-row">' +
                 '<div><div class="time-stat-date">' + date.slice(5) + '</div><div class="time-stat-detail">' + list.length + '次 · ' + times + '</div></div>' +
-                '<div class="time-stat-val">' + sum.toFixed(1) + 'h</div></div>';
+                '<div class="time-stat-val">' + label + '</div></div>';
         });
         html += '</div>';
     }
@@ -774,19 +886,25 @@ function deleteBrand(i) {
 
 function exportCSV() {
     if (records.length === 0) { showToast('暂无数据可导出','error'); return; }
-    var csv = '日期,时段,模式,品牌,件数,单价,工时,备注,收入\n';
+    var csv = '日期,时段,模式,品牌,件数,单价,工时/休息时长,备注,收入\n';
     records.sort(function(a,b){return a.date.localeCompare(b.date);});
     records.forEach(function(r) {
         var isHour = r.mode === 'hour';
-        var pc = isHour ? 0 : getPrice(r.brand);
-        var inc = isHour ? 0 : pc * r.quantity;
-        var brandStr = isHour ? '' : '"'+r.brand.replace(/"/g,'""')+'"';
-        var noteStr = isHour ? '"'+(r.note||'').replace(/"/g,'""')+'"' : '';
-        csv += r.date + ',' + r.time + ',' + (isHour?'计时':'计件') + ',' +
+        var isRest = r.mode === 'rest';
+        var pc = isHour || isRest ? 0 : getPrice(r.brand);
+        var inc = isHour || isRest ? 0 : pc * r.quantity;
+        var brandStr = (isHour || isRest) ? '' : '"'+r.brand.replace(/"/g,'""')+'"';
+        var noteStr = (isHour || isRest) ? '"'+(r.note||'').replace(/"/g,'""')+'"' : '';
+        var modeLabel = isRest ? '休息' : (isHour ? '计时' : '计件');
+        var val = '';
+        if (isRest) val = r.hours || '';
+        else if (isHour) val = r.hours || '';
+        else val = r.quantity || '';
+        csv += r.date + ',' + r.time + ',' + modeLabel + ',' +
             brandStr + ',' +
-            (isHour ? '' : r.quantity) + ',' +
-            (isHour ? '' : (pc>0?pc:'')) + ',' +
-            (isHour ? (r.hours||'') : '') + ',' +
+            (isHour || isRest ? '' : r.quantity) + ',' +
+            (isHour || isRest ? '' : (pc>0?pc:'')) + ',' +
+            val + ',' +
             noteStr + ',' +
             inc.toFixed(2) + '\n';
     });
@@ -824,5 +942,3 @@ function clearData() {
 
 function showModal(id) { document.getElementById(id).classList.add('active'); }
 function hideModal(id) { document.getElementById(id).classList.remove('active'); }
-
-// 注意：initApp 会在密码验证成功后调用
