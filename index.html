@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>家庭记账助手</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app-container">
+<header class="app-header">
+<h1>家庭记账助手</h1>
+<div class="header-date" id="current-date"></div>
+</header>
+<main class="main-content">
+<section class="overview-section">
+<div class="overview-card">
+<div class="overview-title">今日概览</div>
+<div class="overview-stats">
+<div class="stat-item">
+<div class="stat-value" id="today-records">0</div>
+<div class="stat-label">记录数</div>
+</div>
+<div class="stat-item">
+<div class="stat-value" id="today-qty">0</div>
+<div class="stat-label">总数量</div>
+</div>
+<div class="stat-item">
+<div class="stat-value" id="today-duration">0分</div>
+<div class="stat-label">总时长</div>
+</div>
+</div>
+</div>
+</section>
+<section class="quick-actions">
+<button class="action-btn" onclick="openNewRecord('timer')">
+<div class="action-icon">⏱️</div>
+<div class="action-text">计时</div>
+</button>
+<button class="action-btn" onclick="openNewRecord('counter')">
+<div class="action-icon">📦</div>
+<div class="action-text">计件</div>
+</button>
+<button class="action-btn" onclick="showStats()">
+<div class="action-icon">📊</div>
+<div class="action-text">统计</div>
+</button>
+<button class="action-btn" onclick="showHistory()">
+<div class="action-icon">📋</div>
+<div class="action-text">记录</div>
+</button>
+</section>
+<section class="records-section">
+<div class="section-header">
+<h2>今日记录</h2>
+<button class="add-btn" onclick="openNewRecord('timer')">+</button>
+</div>
+<div class="records-list" id="today-records">
+<div class="empty-state">
+<div class="empty-icon">📝</div>
+<p>今日暂无记录</p>
+<p class="empty-hint">点击上方按钮开始记录</p>
+</div>
+</div>
+</section>
+</main>
+<nav class="bottom-nav">
+<button class="nav-item active" onclick="switchTab('home')">
+<div class="nav-icon">🏠</div>
+<div class="nav-text">首页</div>
+</button>
+<button class="nav-item" onclick="switchTab('stats')">
+<div class="nav-icon">📊</div>
+<div class="nav-text">统计</div>
+</button>
+<button class="nav-item" onclick="switchTab('records')">
+<div class="nav-icon">📋</div>
+<div class="nav-text">记录</div>
+</button>
+<button class="nav-item" onclick="switchTab('brands')">
+<div class="nav-icon">🏷️</div>
+<div class="nav-text">品牌</div>
+</button>
+</nav>
+</div>
+<div class="modal-overlay" id="new-record-modal">
+<div class="modal-content">
+<div class="modal-header">
+<h2>新建记录</h2>
+<button class="close-btn" onclick="closeModal('new-record-modal')">×</button>
+</div>
+<div class="modal-body">
+<div class="form-group">
+<label class="form-label">品牌</label>
+<select class="form-input" id="record-brand"></select>
+</div>
+<div class="form-group">
+<label class="form-label">类型</label>
+<div class="type-selector">
+<button class="type-btn active" onclick="selectType('timer')">⏱️ 计时</button>
+<button class="type-btn" onclick="selectType('counter')">📦 计件</button>
+</div>
+</div>
+<div id="timer-fields">
+<div class="timer-display" id="timer-display">00:00:00</div>
+<div class="timer-controls">
+<button class="timer-btn start" onclick="startTimer()">▶</button>
+<button class="timer-btn stop" onclick="stopTimer()" style="display:none">⏹</button>
+</div>
+</div>
+<div id="counter-fields" style="display:none">
+<div class="form-group">
+<label class="form-label">数量</label>
+<div class="qty-selector">
+<button class="qty-btn minus" onclick="changeQty(-1)">−</button>
+<div class="qty-value" id="qty-value">1</div>
+<button class="qty-btn plus" onclick="changeQty(1)">＋</button>
+</div>
+</div>
+<div class="form-group">
+<label class="form-label">开始时间</label>
+<input type="datetime-local" class="form-input" id="counter-start">
+</div>
+<div class="form-group">
+<label class="form-label">结束时间</label>
+<input type="datetime-local" class="form-input" id="counter-end">
+</div>
+</div>
+<div class="form-group">
+<label class="form-label">备注</label>
+<input type="text" class="form-input" id="record-note" placeholder="可选">
+</div>
+</div>
+<div class="modal-footer">
+<button class="btn secondary" onclick="closeModal('new-record-modal')">取消</button>
+<button class="btn primary" onclick="saveRecord()">保存</button>
+</div>
+</div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
