@@ -309,7 +309,7 @@ async function renderHome() {
 }
 
 // ================================================================
-//  统计页
+//  统计页（修复滚动抖动）
 // ================================================================
 let currentStatPeriod = 'week';
 
@@ -335,9 +335,12 @@ async function renderStats() {
     statsContainer.innerHTML = '<div class="stat-empty">该周期暂无记录</div>';
     statsOverview.style.display = 'none';
     if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    // 修复滚动抖动：重置滚动条到顶部
+    document.getElementById('mainContent').scrollTop = 0;
     return;
   }
 
+  // 按天分组
   const dayMap = {};
   periodRecords.forEach(r => {
     if (!dayMap[r.date]) dayMap[r.date] = { date: r.date, records: [], piece: 0, time: 0 };
@@ -389,6 +392,7 @@ async function renderStats() {
   });
   statsContainer.innerHTML = html;
 
+  // 绑定展开/收起 + 记录编辑删除
   statsContainer.querySelectorAll('.stat-day-card').forEach(card => {
     const header = card.querySelector('.stat-day-header');
     const detail = card.querySelector('.stat-day-detail');
@@ -415,6 +419,7 @@ async function renderStats() {
     });
   });
 
+  // 总览
   const totalPiece = periodRecords.filter(r => r.type === 'piece').reduce((s, r) => s + r.quantity, 0);
   const totalTime = periodRecords.filter(r => r.type === 'time').reduce((s, r) => s + r.duration, 0);
   statsOverview.style.display = 'flex';
@@ -424,6 +429,7 @@ async function renderStats() {
     <div class="item"><div class="num" style="color:#e67e22;">${totalTime.toFixed(2)}h</div><div class="label">计时总长</div></div>
   `;
 
+  // 图表 - 品牌统计
   const brandMap = {};
   brandList.forEach(b => brandMap[b.name] = { piece: 0, time: 0 });
   periodRecords.forEach(r => {
@@ -455,6 +461,9 @@ async function renderStats() {
       scales: { y: { beginAtZero: true } }
     }
   });
+
+  // 修复滚动抖动：渲染完成后将滚动条置顶
+  document.getElementById('mainContent').scrollTop = 0;
 }
 
 // ================================================================
@@ -666,7 +675,7 @@ nextDayBtn.addEventListener('click', () => {
 });
 
 // ================================================================
-//  导航切换
+//  导航切换（切换时重置滚动）
 // ================================================================
 document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
   btn.addEventListener('click', function() {
@@ -675,6 +684,8 @@ document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
     document.getElementById('page-' + page).classList.add('active');
     document.querySelectorAll('.nav-item[data-page]').forEach(b => b.classList.remove('active'));
     this.classList.add('active');
+    // 切换页面时重置滚动位置
+    document.getElementById('mainContent').scrollTop = 0;
     if (page === 'stats') renderStats();
     if (page === 'home') renderHome();
   });
